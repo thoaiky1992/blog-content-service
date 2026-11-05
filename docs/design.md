@@ -1092,7 +1092,7 @@ Permission matrix:
 | blog:create | ✓ | ✓ | | | |
 | blog:update | ✓ | ✓ | | | |
 | blog:delete | ✓ | | | | |
-| report:export | ✓ | | | ✓ | |
+| blog:export | ✓ | | | ✓ | |
 
 AuthZ lives in the application/use case layer, not scattered across handlers.
 
