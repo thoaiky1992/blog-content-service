@@ -2,10 +2,10 @@
 
 A Go REST API for blog content with role-based access, soft delete, CSV export and
 **unique daily view counting** (one view per blog + client IP + UTC day), backed by
-PostgreSQL.
+PostgreSQL, with Redis caches for authenticated actors and committed view markers.
 
-- Go, Gin, PostgreSQL 18, pgx/v5, Goose migrations, hand-written SQL, `log/slog` JSON
-- Hexagonal layout: `transport/http` → `app` → `domain` ← `adapter/postgres`
+- Go, Gin, PostgreSQL 18, Redis 8, pgx/v5, Goose migrations, hand-written SQL, `log/slog` JSON
+- Hexagonal layout: `transport/http` → `app` → `domain` ← `adapter/{postgres,redis}`
 - Correctness of the view counter comes from a PostgreSQL primary key, not from
   process memory, so it holds across any number of instances
 
@@ -21,7 +21,7 @@ Requires Docker with Compose.
 docker compose up --build
 ```
 
-This starts `postgres` → `migrate` (goose applies `migrations/`) → `api` on
+This starts PostgreSQL, Redis, migrations, then the API on
 http://localhost:8080.
 
 ```bash
@@ -35,7 +35,7 @@ Stop with `docker compose down` (add `-v` to also delete the database volume).
 
 ```bash
 cp .env.example .env            # edit values if needed
-docker compose up -d postgres migrate
+docker compose up -d postgres redis migrate
 make run                        # sources .env, then go run ./cmd/api
 ```
 
@@ -46,12 +46,20 @@ Environment variables (see [.env.example](.env.example)):
 | Variable | Default | Description |
 |---|---|---|
 | `DATABASE_URL` | – (required) | PostgreSQL connection string |
-| `IP_HASH_SECRET` | – (required) | Secret for the HMAC of client IPs. Raw IPs are never stored |
 | `HTTP_ADDR` | `:8080` | Listen address |
 | `TRUSTED_PROXIES` | empty | Comma-separated CIDRs of reverse proxies whose `X-Forwarded-For` is trusted. Empty = never trust forwarded headers |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown deadline |
 | `DB_MAX_CONNS` | `20` | pgx pool size |
+| `REDIS_ADDR` | empty (disabled) | Redis address, for example `localhost:6379` |
+| `REDIS_PASSWORD` | empty | Redis password |
+| `REDIS_DB` | `0` | Redis logical database |
+| `REDIS_ACTOR_TTL` | `5m` | TTL for successful actor lookups |
+| `REDIS_VIEW_TTL` | `48h` | TTL for committed unique-view markers |
+
+Redis is a derived cache, not the source of truth. Actor cache misses/errors query
+PostgreSQL. The view Lua script checks only markers written after PostgreSQL commits;
+Redis misses/errors execute the original atomic PostgreSQL view statement.
 
 > If you run behind Nginx or a load balancer, set `TRUSTED_PROXIES` to its address
 > range. Otherwise every visitor looks like the proxy's IP and views are
@@ -152,26 +160,75 @@ Every error uses one envelope:
 ## Tests
 
 ```bash
-go test ./...                  # unit + handler tests; integration tests need Docker
-go test -race ./...            # also run this before finishing a change
-go test ./test/integration/... -run TestHTTPConcurrentSameIPCountsOnce -v   # one test
+go test ./test/unit/...          # six APIs with in-memory repositories
+go test ./test/integration/...   # six APIs against the currently running PostgreSQL
+TEST_DATABASE_URL='postgres://user:pass@host/db?sslmode=disable' go test ./test/integration/...
+go test ./...                    # run both suites; integration needs PostgreSQL
+go test -race ./...              # run both suites with the race detector
 ```
 
-- **Unit / handler tests** use in-memory fakes (`internal/app/apptest`) behind the real
-  services and router: the permission matrix for all 6 endpoints × 5 roles, validation,
-  pagination, UUID and body errors, client-IP resolution, CSV format and injection
-  defense.
-- **Integration tests** (`test/integration`) start a real `postgres:18` with
-  testcontainers-go, apply the real migrations, and cover CRUD and audit fields,
-  soft delete, pagination, and the concurrency cases: 100 concurrent requests from the
-  same IP → 1 view; from 100 IPs → 100 views; across the UTC midnight boundary; behind a
-  trusted proxy; a 1200-row CSV export. Without Docker they skip themselves.
+- **Unit tests** (`test/unit`) use six endpoint-specific files with in-memory repositories
+  behind the real services and router. Each endpoint covers its valid response, invalid
+  inputs and the role permission matrix.
+- **Integration tests** (`test/integration`) run the same six APIs through the production
+  PostgreSQL adapters. They connect to `TEST_DATABASE_URL`, then `DATABASE_URL`, or the
+  default Compose database at `localhost:5432`. Tests use the existing schema directly,
+  never truncate tables, and delete only blog IDs created by the tests themselves.
 
 ## Load tests and performance
 
-Not done yet. Phase 9 of the [design](docs/design.md) adds k6 scenarios and
-`docs/performance-report.md`. No throughput figure should be quoted before that run.
+The load tests use a local k6 installation. Each script contains its own
+arrival-rate stages and thresholds:
+
+| Script | Operation |
+|---|---|
+| `loadtest/k6/read_blogs.js` | `GET /api/v1/blogs` |
+| `loadtest/k6/read_detail_blog.js` | `GET /api/v1/blogs/:id` |
+| `loadtest/k6/create_blog.js` | `POST /api/v1/blogs` |
+| `loadtest/k6/update_blog.js` | `PUT /api/v1/blogs/:id` |
+
+Start the service, seed the deterministic blog dataset, and get an editor ID for the
+authenticated create/update requests:
+
+```bash
+docker compose up -d --build
+make seed
+EDITOR_ID="$(docker exec postgres psql -U blog -d blog -Atc \
+  "SELECT id FROM users WHERE role = 'editor' ORDER BY id LIMIT 1")"
+```
+
+Run each script separately:
+
+```bash
+# List blogs
+k6 run loadtest/k6/read_blogs.js
+
+# Blog detail; DETAIL_POOL defaults to 1,000 seeded blogs
+k6 run -e DETAIL_POOL=1000 loadtest/k6/read_detail_blog.js
+
+# Blog detail with the k6 Web Dashboard
+K6_WEB_DASHBOARD=true k6 run loadtest/k6/read_detail_blog.js
+
+# Create blogs; EDITOR_ID must have blog:create permission
+k6 run -e EDITOR_ID="$EDITOR_ID" loadtest/k6/create_blog.js
+
+# Update seeded blogs; ROWS must not exceed the number passed to make seed
+k6 run -e EDITOR_ID="$EDITOR_ID" -e ROWS=1000000 loadtest/k6/update_blog.js
+```
+
+When the k6 Web Dashboard is enabled, view it in a browser at
+[http://127.0.0.1:5665](http://127.0.0.1:5665).
+
+All scripts default to `http://localhost:8080/api/v1`. Use
+`-e BASE_URL=http://host:port/api/v1` to target another service instance. For detail
+testing, pass `-e BLOG_ID=<uuid>` to target one blog; for update testing, the same
+option overrides random selection from the seeded rows.
+
+The seed is additive and idempotent. Change its size with `ROWS=10000 make seed`; this
+adds deterministic blogs through `blog-10000` and does not remove existing rows.
+
+Reset the local database with `docker compose down -v` if a clean dataset is required.
 
 ## Make targets
 
-`make build | run | test | test-race | vet | up | down`
+`make build | run | test-unit | test-integration | test-race | vet | up | down | seed`

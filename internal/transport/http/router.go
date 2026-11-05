@@ -19,6 +19,7 @@ type Deps struct {
 	Log      *slog.Logger
 	DB       handler.Pinger
 	Users    app.UserRepository
+	Actors   app.ActorCache
 	Blogs    *app.BlogService
 	Views    *app.ViewService
 	Reports  *app.ReportService
@@ -54,7 +55,7 @@ func NewRouter(d Deps) *gin.Engine {
 	blog := handler.NewBlog(d.Blogs, d.Views)
 	report := handler.NewReport(d.Reports, d.Clock)
 
-	api := r.Group("/api/v1", middleware.ClientIP(d.ClientIP), middleware.MockAuth(d.Users))
+	api := r.Group("/api/v1", middleware.ClientIP(d.ClientIP), middleware.MockAuth(d.Users, d.Actors))
 	api.GET("/blogs", blog.List)
 	api.GET("/blogs/:id", blog.Get)
 	api.POST("/blogs", blog.Create)

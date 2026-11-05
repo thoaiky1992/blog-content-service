@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"errors"
+	"log/slog"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -20,8 +21,9 @@ const userIDHeader = "X-User-ID"
 //	user not found    -> 401
 //	user found        -> Actor{ID, Role}
 //
-// The role is always read from the database, never from the client.
-func MockAuth(users app.UserRepository) gin.HandlerFunc {
+// The role comes from PostgreSQL (directly or through its bounded Redis cache),
+// never from the client.
+func MockAuth(users app.UserRepository, cache app.ActorCache) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		raw := c.GetHeader(userIDHeader)
 		if raw == "" {
@@ -34,13 +36,30 @@ func MockAuth(users app.UserRepository) gin.HandlerFunc {
 			httpx.WriteError(c, domain.ErrUnauthenticated)
 			return
 		}
-		actor, err := users.GetByID(c.Request.Context(), id)
+		ctx := c.Request.Context()
+		if cache != nil {
+			actor, found, err := cache.Get(ctx, id)
+			if err != nil {
+				slog.DebugContext(ctx, "actor cache lookup failed; falling back to postgres", "error", err)
+			} else if found {
+				httpx.SetActor(c, actor)
+				c.Next()
+				return
+			}
+		}
+
+		actor, err := users.GetByID(ctx, id)
 		if err != nil {
 			if errors.Is(err, domain.ErrNotFound) {
 				err = domain.ErrUnauthenticated
 			}
 			httpx.WriteError(c, err)
 			return
+		}
+		if cache != nil {
+			if err := cache.Set(ctx, actor); err != nil {
+				slog.DebugContext(ctx, "actor cache write failed", "error", err)
+			}
 		}
 		httpx.SetActor(c, actor)
 		c.Next()

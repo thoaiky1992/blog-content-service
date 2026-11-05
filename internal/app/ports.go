@@ -4,7 +4,6 @@ package app
 
 import (
 	"context"
-	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
@@ -66,13 +65,21 @@ type ViewStore interface {
 	RecordUniqueView(ctx context.Context, key domain.ViewKey, at time.Time) (counted bool, err error)
 }
 
+// ViewCache stores derived markers for views already committed to PostgreSQL.
+// A miss or cache failure must always fall back to ViewStore.
+type ViewCache interface {
+	WasRecorded(ctx context.Context, key domain.ViewKey) (bool, error)
+	MarkRecorded(ctx context.Context, key domain.ViewKey) error
+}
+
 // UserRepository resolves mock-auth users.
 type UserRepository interface {
 	// GetByID returns domain.ErrNotFound for an unknown user.
 	GetByID(ctx context.Context, id uuid.UUID) (domain.Actor, error)
 }
 
-// IPHasher turns a client IP into the stored, non-reversible hash.
-type IPHasher interface {
-	Hash(ip netip.Addr) domain.IPHash
+// ActorCache caches successful user lookups. Unknown users are not cached.
+type ActorCache interface {
+	Get(ctx context.Context, id uuid.UUID) (actor domain.Actor, found bool, err error)
+	Set(ctx context.Context, actor domain.Actor) error
 }

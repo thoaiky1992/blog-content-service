@@ -13,21 +13,21 @@ Build the phases in order (design.md §22). Phase 6 (unique view) is the most im
 
 ## Commands
 
-Phase 1 (bootstrap) is done: config, Gin server, slog JSON, `/healthz` + `/readyz` (pings PostgreSQL), graceful shutdown, Dockerfile, compose, Makefile. Required env vars are in `.env.example` (only `DATABASE_URL` is mandatory). `make build|run|test|test-race|vet|up|down` wrap the commands below. Phase 2 (database) is done too: Goose migrations in `migrations/` (users, blogs + partial index, blog_daily_views, seed users). Compose runs postgres → `migrate` (built from `Dockerfile.migrate`, goose only) → api. Seed users (admin, editor, reader, reporter) get DB-generated `uuidv7()` IDs, so look them up (`SELECT id, role FROM users`) to use as `X-User-ID`. Phase 3 (domain/app) is done: domain types, permission matrix, validation, ViewKey, ports in `internal/app/ports.go`, BlogService/ViewService/ReportService, `platform/clock`, all unit-tested with in-memory fakes. Anonymous lacking a permission gets `ErrUnauthenticated` (401), an authenticated user gets `ErrForbidden` (403). `limit` outside 1..100 or `page` < 1 is a validation error, not clamped. Phase 4 (Postgres adapter) is done: `internal/adapter/postgres` (BlogRepo, ViewStore, UserRepo, `mapErr` turning connectivity errors into `ErrUnavailable`). Integration tests in `test/integration` start `postgres:18` via testcontainers, apply `migrations/` with goose, and skip themselves if Docker is down; run one with `go test ./test/integration/... -run TestRecordUniqueViewSameIPConcurrent -v`. Phases 5–8 are done too: Gin handlers, mock-auth/client-ip middleware, `platform/clientip` + `platform/iphash` (required `IP_HASH_SECRET`), streamed CSV, README, `docs/architecture.md`, `docs/database.md`, `docs/technical-decisions.md`, and a validated `openapi.yaml`. Only Phases 9–11 remain (k6 load tests + `docs/performance-report.md`, benchmark-driven optimizations, final verification), so no TPS number may be claimed yet. Error mapping and context accessors live in `transport/http/httpx` (not `transport/http/errors.go`) to avoid an import cycle. `internal/app/apptest` holds exported in-memory fakes used by the handler tests. When you change an endpoint, update `openapi.yaml` and README by hand: nothing checks them against the code. Commands marked "not yet" depend on later phases.
+Phase 1 (bootstrap) is done: config, Gin server, slog JSON, `/healthz` + `/readyz` (pings PostgreSQL), graceful shutdown, Dockerfile, compose, Makefile. Required env vars are in `.env.example` (only `DATABASE_URL` is mandatory). `make build|run|test|test-race|vet|up|down|seed` wrap the commands below. Phase 2 (database) is done too: Goose migrations in `migrations/` (users, blogs + partial index, blog_daily_views, seed users). Compose runs postgres → `migrate` (built from `Dockerfile.migrate`, goose only) → api. Seed users (admin, editor, reader, reporter) get DB-generated `uuidv7()` IDs, so look them up (`SELECT id, role FROM users`) to use as `X-User-ID`. Phase 3 (domain/app) is done: domain types, permission matrix, validation, ViewKey, ports in `internal/app/ports.go`, BlogService/ViewService/ReportService, `platform/clock`, and in-memory fakes in `internal/app/apptest`. Anonymous lacking a permission gets `ErrUnauthenticated` (401), an authenticated user gets `ErrForbidden` (403). `limit` outside 1..100 or `page` < 1 is a validation error, not clamped. Phase 4 (Postgres adapter) is done: `internal/adapter/postgres` (BlogRepo, ViewStore, UserRepo, `mapErr` turning connectivity errors into `ErrUnavailable`). All test files are centralized in `test/unit` and `test/integration`; each suite covers the six public APIs. Integration tests connect directly to the existing PostgreSQL schema, never truncate it, and clean up only rows they create. Phases 5–8 are done too: Gin handlers, mock-auth/client-ip middleware, `platform/clientip`, streamed CSV, README, `docs/architecture.md`, `docs/database.md`, `docs/technical-decisions.md`, and a validated `openapi.yaml`. Phase 9 is done: four standalone k6 scenarios in `loadtest/k6/` and deterministic seed data in `loadtest/seed/`. Only Phases 10–11 remain (benchmark-driven optimizations, final verification). Any new TPS number needs a k6 run that records the environment, dataset, VUs, p95/p99, error rate and commit SHA. Error mapping and context accessors live in `transport/http/httpx` (not `transport/http/errors.go`) to avoid an import cycle. When you change an endpoint, update `openapi.yaml` and README by hand: nothing checks them against the code. Commands marked "not yet" depend on later phases.
 
 ```bash
 docker compose up --build                            # postgres (healthy) -> migrate (goose) -> api
-go test ./...                                        # unit + handler tests
+go test ./test/unit/...                              # six APIs with in-memory repositories
+go test ./test/integration/...                       # six APIs against current PostgreSQL
+go test ./...                                        # both suites
 go test -race ./...                                  # required in final verification
-go test ./internal/app -run TestName -v              # single test
-go test ./test/integration/... -run TestName -v      # integration tests (testcontainers-go, needs Docker)
 ```
 
 Load tests use k6 with arrival-rate scenarios. They live in `loadtest/k6/`, and the seed scripts live in `loadtest/seed/`.
 
 ## Stack
 
-Go, Gin, PostgreSQL, pgx/v5 + pgxpool, Goose migrations, **hand-written SQL (no ORM)**, `log/slog` JSON, testcontainers-go, k6. Redis is an optional bonus only. The baseline must not depend on it.
+Go, Gin, PostgreSQL, Redis, pgx/v5 + pgxpool, Goose migrations, **hand-written SQL (no ORM)**, `log/slog` JSON, k6. Redis caches actors and committed view markers, but PostgreSQL remains the source of truth and the app can run with `REDIS_ADDR` empty.
 
 ## Architecture (hexagonal)
 
@@ -35,12 +35,12 @@ Go, Gin, PostgreSQL, pgx/v5 + pgxpool, Goose migrations, **hand-written SQL (no 
 
 - `domain` must not import Gin, pgx, Redis or HTTP DTOs.
 - Interfaces are defined where they are consumed (in `app`). Do not add a generic repository, UnitOfWork, event bus, CQRS or distributed locks.
-- `platform/` holds small helpers: `clientip` (trusted-proxy resolver), `iphash` (HMAC), `clock` (injectable UTC clock for date-boundary tests).
+- `platform/` holds small helpers: `clientip` (trusted-proxy resolver), `clock` (injectable UTC clock for date-boundary tests).
 - Middleware order: recover → request-id → access log → client-ip → mock auth.
 
 ## Core invariants (don't break these)
 
-**Unique daily view = (blog_id, UTC `DATE`, ip_hash).** Correctness comes from the PostgreSQL PK on `blog_daily_views`, never from a Go mutex, a SELECT-then-INSERT check or Redis. The dedup insert and the counter increment run in **one SQL statement**: a CTE that targets the active blog, then `INSERT ... ON CONFLICT DO NOTHING RETURNING`, then `UPDATE blogs SET views = views + 1 WHERE id = (SELECT blog_id FROM inserted)`. The full SQL is in design.md §6.1. The invariant is `blogs.views == COUNT(blog_daily_views WHERE blog_id = X)`.
+**Unique daily view = (blog_id, UTC `DATE`, ip_address).** Correctness comes from the PostgreSQL PK on `blog_daily_views`, never from a Go mutex, a SELECT-then-INSERT check or Redis. The dedup insert and the counter increment run in **one SQL statement**: a CTE that targets the active blog, then `INSERT ... ON CONFLICT DO NOTHING RETURNING`, then `UPDATE blogs SET views = views + 1 WHERE id = (SELECT blog_id FROM inserted)`. Redis only caches markers written after that statement succeeds; misses/errors fall back to PostgreSQL. The invariant is `blogs.views == COUNT(blog_daily_views WHERE blog_id = X)`.
 
 - Only `GET /blogs/{id}` records a view. `GET /blogs` (list) never does.
 - If the blog is missing or deleted, return 404 and record no view. The view statement re-checks `deleted_at IS NULL` to close the race with a concurrent delete.
@@ -66,4 +66,4 @@ Go, Gin, PostgreSQL, pgx/v5 + pgxpool, Goose migrations, **hand-written SQL (no 
 
 ## Performance work
 
-Correctness comes before performance. Don't claim a TPS number without a k6 run that records the environment, dataset, VUs, p95/p99, error rate and commit SHA. Optimizations (Redis seen-cache, keyset pagination, pool tuning, async counter) are added one at a time, only after a benchmark shows the bottleneck, with before/after numbers in `docs/performance-report.md`. Don't turn off PostgreSQL durability settings to improve benchmark numbers.
+Correctness comes before performance. Don't claim a TPS number without a k6 run that records the environment, dataset, VUs, p95/p99, error rate and commit SHA. Optimizations (keyset pagination, pool tuning, async counter) are added one at a time, only after a benchmark shows the bottleneck, with before/after numbers. Don't turn off PostgreSQL durability settings to improve benchmark numbers.

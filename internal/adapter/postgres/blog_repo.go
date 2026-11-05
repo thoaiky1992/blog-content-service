@@ -151,7 +151,8 @@ func (r *BlogRepo) StreamActive(ctx context.Context, fn func(app.ReportRow) erro
 		created_at, updated_at, created_by, updated_by
 	FROM blogs
 	WHERE deleted_at IS NULL
-	ORDER BY created_at DESC, id DESC`
+	ORDER BY created_at DESC, id DESC
+	LIMIT 10`
 	rows, err := r.pool.Query(ctx, q)
 	if err != nil {
 		return mapErr("stream blogs", err)

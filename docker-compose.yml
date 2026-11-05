@@ -1,4 +1,4 @@
-# Startup order: postgres (healthy) -> migrate (goose up) -> api.
+# Startup order: postgres (healthy) -> migrate (goose up), redis (healthy) -> api.
 services:
   postgres:
     image: postgres:18
@@ -18,6 +18,29 @@ services:
       timeout: 3s
       retries: 15
 
+    networks:
+      - app-network
+
+  redis:
+    image: redis:8-alpine
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    networks:
+      - app-network
+
+  redisinsight:
+    image: redislabs/redisinsight:3.4.1
+    container_name: redisinsight
+    restart: always
+    ports:
+      - "5540:5540"
     networks:
       - app-network
 
@@ -42,14 +65,21 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     container_name: api
     restart: unless-stopped
     environment:
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://blog:blog@postgres:5432/blog?sslmode=disable
       LOG_LEVEL: info
-      TRUSTED_PROXIES: ""
-      IP_HASH_SECRET: dev-only-change-me
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: 0
+      REDIS_ACTOR_TTL: 5m
+      REDIS_VIEW_TTL: 48h
+      # Empty by default. Configure only when requests arrive through a trusted proxy.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     ports:
       - "8080:8080"
     networks:

@@ -1,7 +1,7 @@
 # Architecture
 
 The service follows a hexagonal (ports and adapters) layout. Dependencies point inward:
-HTTP and PostgreSQL code depend on the application and domain layers, never the reverse.
+HTTP, PostgreSQL and Redis code depend on the application and domain layers, never the reverse.
 
 ```text
  Client ─▶ Trusted proxy / LB
@@ -31,6 +31,8 @@ HTTP and PostgreSQL code depend on the application and domain layers, never the 
    ┌──────────┴───────────────────────────┐
    │ adapter/postgres  (pgx, SQL)         │  the source of truth
    │  BlogRepo, ViewStore, UserRepo       │
+   │ adapter/redis (go-redis, Lua)         │  derived caches
+   │  ActorCache, ViewCache               │
    └──────────────────────────────────────┘
 ```
 
@@ -39,10 +41,11 @@ HTTP and PostgreSQL code depend on the application and domain layers, never the 
 | Layer | Package | Responsibility | May import |
 |---|---|---|---|
 | Domain | `internal/domain` | Entities, value objects, validation, the permission matrix, `ViewKey`/`ViewDate`, sentinel errors | stdlib, `uuid` only |
-| Application | `internal/app` | Use cases, **authorization**, orchestration; declares the ports (`BlogRepository`, `ViewStore`, `UserRepository`, `IPHasher`, `Clock`) | domain |
+| Application | `internal/app` | Use cases, **authorization**, orchestration; declares the persistence and cache ports | domain |
 | Adapter | `internal/adapter/postgres` | Implements the ports with hand-written SQL; maps DB errors to domain errors | app, domain, pgx |
+| Adapter | `internal/adapter/redis` | Implements actor and committed-view marker caches; Lua checks markers without owning correctness | app, domain, go-redis |
 | Transport | `internal/transport/http` | Routing, JSON/DTOs, middleware, status codes and the error envelope | app, domain, Gin |
-| Platform | `internal/platform/*` | Small infrastructure helpers: `clientip` (trusted-proxy resolver), `iphash` (HMAC), `clock` | domain |
+| Platform | `internal/platform/*` | Small infrastructure helpers: `clientip` (trusted-proxy resolver), `clock` | domain |
 | Wiring | `cmd/api` | Config, constructs everything, graceful shutdown | all |
 
 Rules that keep the layers honest:
@@ -80,7 +83,8 @@ recover → request-id → access log → client-ip → mock auth → handler
 3. **access log** writes one JSON line: request id, method, route pattern, status,
    latency, bytes, `user_id`, `error_code`. It never logs an IP.
 4. **client-ip** resolves the client address once (see below).
-5. **mock auth** reads `X-User-ID`, loads the user (and role) from PostgreSQL.
+5. **mock auth** reads `X-User-ID`; it uses a bounded Redis actor cache and falls back to
+   PostgreSQL on a miss or Redis error. Only successful database lookups are cached.
 
 ### Client IP
 
@@ -99,13 +103,19 @@ recover → request-id → access log → client-ip → mock auth → handler
 `GET /blogs/{id}` → `ViewService.Read`:
 
 ```text
-authorize blog:read
+normalize(client IP) + UTC view date
+ViewCache.WasRecorded(key)     Lua check; hit → GetActive(id) and return
 GetActive(id)                  missing/deleted → 404, nothing written
-hash(client IP) + UTC view date
-RecordUniqueView(key)          ONE SQL statement (see technical-decisions.md)
+RecordUniqueView(key)          cache miss → ONE SQL statement
    storage error → 503/500     never "200 with a lost view"
+ViewCache.MarkRecorded(key)    only after PostgreSQL succeeds
 return blog (views +1 if this call counted)
 ```
+
+Redis is never the source of truth. A cache miss or Redis failure executes the original
+PostgreSQL path. Concurrent misses remain correct because PostgreSQL's unique constraint
+deduplicates them. Markers are written only after the database statement succeeds, so a
+cache hit always represents a view that was committed by this application.
 
 ### CSV export
 
@@ -118,5 +128,5 @@ formula injection.
 ## Graceful shutdown
 
 `SIGTERM`/`SIGINT` → `http.Server.Shutdown` with `SHUTDOWN_TIMEOUT` (in-flight requests
-finish) → the pgx pool is closed. Request contexts are propagated to every database
-call, so a disconnected client cancels its query.
+finish) → the pgx pool and Redis client are closed. Request contexts are propagated to
+database and cache calls, so a disconnected client cancels its work.

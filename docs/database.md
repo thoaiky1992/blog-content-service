@@ -54,10 +54,10 @@ Table constraints:
 |---|---|---|
 | `blog_id` | `uuid` NOT NULL → `blogs(id)` | |
 | `view_date` | `date` NOT NULL | the **UTC** calendar day, computed by the app |
-| `ip_hash` | `bytea` NOT NULL | `CHECK (octet_length(ip_hash) = 16)`; HMAC-SHA256 truncated to 16 bytes, never the raw IP |
+| `ip_address` | `inet` NOT NULL | Canonical client IP used for daily view deduplication |
 | `created_at` | `timestamptz` NOT NULL | |
 
-**Primary key `(blog_id, view_date, ip_hash)`** is the uniqueness guarantee: one row per
+**Primary key `(blog_id, view_date, ip_address)`** is the uniqueness guarantee: one row per
 blog + UTC day + client. Everything else about view counting depends on this constraint.
 
 ## Indexes
@@ -66,7 +66,7 @@ blog + UTC day + client. Everything else about view counting depends on this con
 |---|---|---|
 | `blogs_pkey` | `(id)` | detail, update, delete |
 | `blogs_active_created_idx` | `(created_at DESC, id DESC) WHERE deleted_at IS NULL` | list and CSV: ordered scan over active blogs, deleted rows are not in the index |
-| `blog_daily_views_pkey` | `(blog_id, view_date, ip_hash)` | dedup on insert; also lookups by blog |
+| `blog_daily_views_pkey` | `(blog_id, view_date, ip_address)` | dedup on insert; also lookups by blog |
 
 There is deliberately no index on `deleted_at` (the partial index covers it) and none on
 `views` (it is updated constantly, so an index would only add write cost).

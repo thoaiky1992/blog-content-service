@@ -477,7 +477,7 @@ Redis is not the source of truth for unique views.
 | Migration | Goose |
 | SQL | Hand-written SQL |
 | Logging | `log/slog` JSON |
-| Integration test | testcontainers-go |
+| Integration test | Current PostgreSQL schema |
 | Load test | k6 |
 | Redis | Optional / Bonus |
 
@@ -617,10 +617,10 @@ blog-service/
 │   │           └── health.go
 │   └── platform/
 │       ├── clientip/
-│       ├── iphash/
 │       └── clock/
 ├── migrations/
 ├── test/
+│   ├── unit/
 │   └── integration/
 ├── loadtest/
 │   ├── k6/
@@ -712,10 +712,10 @@ Do not index `views` because the counter is updated frequently.
 CREATE TABLE blog_daily_views (
     blog_id     uuid        NOT NULL REFERENCES blogs(id),
     view_date   date        NOT NULL,
-    ip_hash     bytea       NOT NULL CHECK (octet_length(ip_hash) = 16),
+    ip_address  inet        NOT NULL,
     created_at  timestamptz NOT NULL,
 
-    PRIMARY KEY (blog_id, view_date, ip_hash)
+    PRIMARY KEY (blog_id, view_date, ip_address)
 );
 ```
 
@@ -741,17 +741,13 @@ The app is responsible for deriving the date in UTC.
 
 ---
 
-## 5.6 IP privacy
-
-Raw IPs are not stored.
+## 5.6 IP normalization
 
 Flow:
 
 ```text
 client IP
 -> normalize
--> HMAC-SHA256(secret, canonical IP)
--> truncate 16 bytes
 -> DB
 ```
 
@@ -801,7 +797,7 @@ inserted AS (
     INSERT INTO blog_daily_views (
         blog_id,
         view_date,
-        ip_hash,
+        ip_address,
         created_at
     )
     SELECT
@@ -810,7 +806,7 @@ inserted AS (
         $3,
         $4
     FROM target
-    ON CONFLICT (blog_id, view_date, ip_hash)
+    ON CONFLICT (blog_id, view_date, ip_address)
     DO NOTHING
     RETURNING blog_id
 )
@@ -1204,7 +1200,7 @@ Only add a content cache with a benchmark, and its invalidation must be tested a
 - RBAC matrix;
 - UTC date boundary;
 - client IP resolver;
-- IP hash;
+- normalized client IP;
 - application permission/error behavior.
 
 ## Handler
@@ -1546,7 +1542,7 @@ RBAC and validation tests.
 
 ## Phase 6 – Unique view
 
-Atomic CTE + HMAC IP + concurrency tests.
+Atomic CTE + normalized IP + concurrency tests.
 
 This is the most important phase.
 
@@ -1612,7 +1608,7 @@ no deleted blog leak
 | IP | trusted-proxy resolver | security |
 | IP persistence | HMAC | privacy |
 | Isolation | READ COMMITTED | enough with constraints |
-| Integration DB | testcontainers | real concurrency |
+| Integration DB | Current PostgreSQL schema | real adapters; no table truncation |
 | Load test | k6 | p95/p99 + arrival-rate |
 | PG failure during view | fail request | correctness-first |
 

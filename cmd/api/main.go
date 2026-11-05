@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/sky/blog-service/internal/adapter/postgres"
+	redisadapter "github.com/sky/blog-service/internal/adapter/redis"
 	"github.com/sky/blog-service/internal/app"
 	"github.com/sky/blog-service/internal/config"
 	"github.com/sky/blog-service/internal/platform/clientip"
 	"github.com/sky/blog-service/internal/platform/clock"
-	"github.com/sky/blog-service/internal/platform/iphash"
 	transport "github.com/sky/blog-service/internal/transport/http"
 )
 
@@ -48,18 +48,26 @@ func run() error {
 	}
 	defer pool.Close()
 
-	hasher, err := iphash.New([]byte(cfg.IPHashSecret))
-	if err != nil {
-		return err
-	}
 	clk := clock.System{}
 	blogRepo := postgres.NewBlogRepo(pool)
+	var actorCache app.ActorCache
+	var viewCache app.ViewCache
+	if cfg.RedisAddr != "" {
+		redisClient, err := redisadapter.NewClient(ctx, cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
+		if err != nil {
+			return err
+		}
+		defer redisClient.Close()
+		actorCache = redisadapter.NewActorCache(redisClient, cfg.RedisActorTTL)
+		viewCache = redisadapter.NewViewCache(redisClient, cfg.RedisViewTTL)
+	}
 	router := transport.NewRouter(transport.Deps{
 		Log:      log,
 		DB:       pool,
 		Users:    postgres.NewUserRepo(pool),
+		Actors:   actorCache,
 		Blogs:    app.NewBlogService(blogRepo, clk),
-		Views:    app.NewViewService(blogRepo, postgres.NewViewStore(pool), hasher, clk),
+		Views:    app.NewViewService(blogRepo, postgres.NewViewStore(pool), viewCache, clk),
 		Reports:  app.NewReportService(blogRepo),
 		ClientIP: clientip.New(cfg.TrustedProxies),
 		Clock:    clk,

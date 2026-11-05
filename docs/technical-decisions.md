@@ -18,9 +18,9 @@ WITH target AS (
     SELECT id FROM blogs WHERE id = $1 AND deleted_at IS NULL
 ),
 inserted AS (
-    INSERT INTO blog_daily_views (blog_id, view_date, ip_hash, created_at)
+    INSERT INTO blog_daily_views (blog_id, view_date, ip_address, created_at)
     SELECT id, $2::date, $3::bytea, $4::timestamptz FROM target
-    ON CONFLICT (blog_id, view_date, ip_hash) DO NOTHING
+    ON CONFLICT (blog_id, view_date, ip_address) DO NOTHING
     RETURNING blog_id
 ),
 bumped AS (
@@ -58,18 +58,20 @@ Why it is correct:
 | Failure recovery | Nothing to recover: it is all in one transactional store. PostgreSQL down → request fails (503) | Redis down: either fail open (risk duplicates until it returns) or lose un-flushed counts; needs a recovery story |
 | Database load | One insert + one update per new view | Greatly reduced |
 
-Decision: **A is the baseline** because correctness is checkable and there is nothing to
-reconcile. Option B (or a Redis "seen" cache in front of A that fails open to PostgreSQL)
-is a performance optimization to adopt only if a benchmark shows the hot row or the
-duplicate-view DB load is a real bottleneck. Redis is not part of the current build.
+Decision: **A remains the source of truth** because correctness is checkable and there is
+nothing to reconcile. A Redis committed-marker cache now sits in front of A for duplicate
+reads. Its Lua script only checks for a marker; a miss or Redis error falls back to the
+atomic PostgreSQL statement. The marker is written only after PostgreSQL succeeds, so
+Redis downtime increases database load but does not lose or double-count views. This is
+not option B: there is no Redis-owned counter or asynchronous aggregation.
 
 ### Details that matter
 
 - **Date** is `DATE` computed from `now.UTC()` in the app through an injectable `Clock`, so
   the midnight boundary is unit-testable. Reads at `23:59:59` and `00:00:00` UTC are
   different days.
-- **Client identity** is the HMAC-SHA256 of the normalized IP, truncated to 16 bytes. Raw
-  IPs are never stored or logged. IPv4-mapped IPv6 (`::ffff:1.2.3.4`) equals `1.2.3.4`.
+- **Client identity** is the normalized IP stored in PostgreSQL as `inet`.
+  IPv4-mapped IPv6 (`::ffff:1.2.3.4`) equals `1.2.3.4`.
 - **PostgreSQL failure** while recording the view fails the request (`503`, or `500` if
   unclassified). The detail endpoint never returns `200` with a silently dropped view.
 - **Client disconnect** cancels the request context, which cancels the query. There is no
@@ -115,8 +117,9 @@ blog cannot leak from a stale cache.
 
 ## 4. Authentication and authorization
 
-- Mock auth: `X-User-ID`; the role is read from the database, so a client cannot claim a
-  role (verified by a test that sends fake role headers).
+- Mock auth: `X-User-ID`; the role is read from PostgreSQL on a cache miss and successful
+  lookups are cached in Redis for a bounded TTL. Redis errors fall back to PostgreSQL, and
+  a client still cannot claim a role (verified by a test that sends fake role headers).
 - The permission matrix is one table in `domain/auth.go`; every use case calls
   `actor.Require(...)`. Anonymous with a missing permission → `401`; authenticated → `403`.
 - Editors may update any blog; the assignment defines no ownership rule.
@@ -152,19 +155,18 @@ counter (covered by unit and integration tests).
 
 ## 8. Testing approach
 
-- Pure logic (permissions, validation, UTC boundary, IP resolver, hasher, CSV sanitizing)
+- Pure logic (permissions, validation, UTC boundary, IP resolver, CSV sanitizing)
   is unit-tested.
 - The real services run behind the real router with in-memory fakes for the endpoint ×
   role matrix and error cases.
-- Concurrency claims are verified against a **real PostgreSQL** (testcontainers), not
-  mocks. As a sanity check, deliberately breaking the counter statement (incrementing for
-  duplicates too) makes eight of those tests fail.
+- Integration tests run directly against the currently configured **real PostgreSQL**.
+  They never truncate tables and clean up only blog IDs created by the tests.
 
 ## 9. Not done / future work
 
 - Load tests and the performance report (design Phase 9). Throughput targets are
   unverified, so none is claimed.
-- Optimizations only worth doing after measuring: Redis seen-cache, async counter
-  aggregation for a hot blog, keyset pagination, partitioning `blog_daily_views`.
+- Optimizations only worth doing after measuring: async counter aggregation for a hot
+  blog, keyset pagination, partitioning `blog_daily_views`.
 - The `uuidv7()` column default needs PostgreSQL 18 (the service itself generates UUIDv7
   values, so only the default depends on the version).

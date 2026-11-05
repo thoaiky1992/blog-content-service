@@ -5,7 +5,6 @@ package apptest
 import (
 	"context"
 	"errors"
-	"net/netip"
 	"sync"
 	"time"
 
@@ -176,13 +175,4 @@ func (u *Users) GetByID(_ context.Context, id uuid.UUID) (domain.Actor, error) {
 		return domain.Actor{}, domain.ErrNotFound
 	}
 	return a, nil
-}
-
-// Hasher maps each IP to a distinct, deterministic hash (no secret needed).
-type Hasher struct{}
-
-func (Hasher) Hash(ip netip.Addr) domain.IPHash {
-	var h domain.IPHash
-	copy(h[:], ip.WithZone("").Unmap().AsSlice())
-	return h
 }
