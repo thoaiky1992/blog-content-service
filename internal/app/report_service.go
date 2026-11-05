@@ -18,7 +18,7 @@ func NewReportService(repo BlogRepository) *ReportService {
 // Export checks permission, then streams active blogs to fn. Permission is
 // checked before any row is produced so the handler can still send a 403.
 func (s *ReportService) Export(ctx context.Context, actor domain.Actor, fn func(ReportRow) error) error {
-	if err := actor.Require(domain.PermBlogExport); err != nil {
+	if err := actor.Require(domain.PermReportExport); err != nil {
 		return err
 	}
 	return s.repo.StreamActive(ctx, fn)

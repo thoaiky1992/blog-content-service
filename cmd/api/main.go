@@ -11,7 +11,11 @@ import (
 	"time"
 
 	"github.com/sky/blog-service/internal/adapter/postgres"
+	"github.com/sky/blog-service/internal/app"
 	"github.com/sky/blog-service/internal/config"
+	"github.com/sky/blog-service/internal/platform/clientip"
+	"github.com/sky/blog-service/internal/platform/clock"
+	"github.com/sky/blog-service/internal/platform/iphash"
 	transport "github.com/sky/blog-service/internal/transport/http"
 )
 
@@ -44,9 +48,26 @@ func run() error {
 	}
 	defer pool.Close()
 
+	hasher, err := iphash.New([]byte(cfg.IPHashSecret))
+	if err != nil {
+		return err
+	}
+	clk := clock.System{}
+	blogRepo := postgres.NewBlogRepo(pool)
+	router := transport.NewRouter(transport.Deps{
+		Log:      log,
+		DB:       pool,
+		Users:    postgres.NewUserRepo(pool),
+		Blogs:    app.NewBlogService(blogRepo, clk),
+		Views:    app.NewViewService(blogRepo, postgres.NewViewStore(pool), hasher, clk),
+		Reports:  app.NewReportService(blogRepo),
+		ClientIP: clientip.New(cfg.TrustedProxies),
+		Clock:    clk,
+	})
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           transport.NewRouter(log, pool),
+		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

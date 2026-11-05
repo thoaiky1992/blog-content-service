@@ -1,0 +1,340 @@
+openapi: 3.0.3
+info:
+  title: Blog Content Service
+  version: 1.0.0
+  description: |
+    REST API for blog content with role-based access, soft delete, CSV export and
+    unique daily view counting (one view per blog + client IP + UTC day).
+
+    **Authentication is mocked.** Send `X-User-ID: <uuid>` of a seeded user. Without the
+    header the caller is anonymous. A malformed or unknown ID returns 401. The role is
+    always read from the database.
+
+    An anonymous caller lacking a permission gets 401; an authenticated caller gets 403.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: Blogs
+  - name: Reports
+  - name: Health
+security:
+  - UserId: []
+  - {}
+paths:
+  /api/v1/blogs:
+    get:
+      tags: [Blogs]
+      summary: List blogs
+      description: Active (not soft-deleted) blogs, newest first. Never increases view counters.
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: One page of blogs
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlogList" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    post:
+      tags: [Blogs]
+      summary: Create a blog
+      description: Roles Editor, Admin.
+      security:
+        - UserId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateBlog" }
+      responses:
+        "201":
+          description: Created
+          headers:
+            Location:
+              schema: { type: string, example: /api/v1/blogs/01a1aade-509d-7cb7-8f37-269b76a71cdb }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Blog" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMedia" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/v1/blogs/{id}:
+    parameters:
+      - $ref: "#/components/parameters/BlogId"
+    get:
+      tags: [Blogs]
+      summary: Get blog detail
+      description: |
+        Records one unique daily view for (blog, UTC date, client IP). Repeated reads by
+        the same client on the same UTC day do not increase `views`. If the view cannot
+        be recorded the request fails with 503 instead of returning 200 with a lost view.
+      responses:
+        "200":
+          description: The blog
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Blog" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    put:
+      tags: [Blogs]
+      summary: Replace a blog's editable fields
+      description: |
+        Roles Editor, Admin (any editor may update any blog). Replaces title, author,
+        content and description. A soft-deleted blog is never revived: it returns 404.
+        If `version` is sent and does not match, the response is 409.
+      security:
+        - UserId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateBlog" }
+      responses:
+        "200":
+          description: Updated blog
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Blog" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The supplied `version` does not match the current version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMedia" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    delete:
+      tags: [Blogs]
+      summary: Soft delete a blog
+      description: Admin only. The blog disappears from detail, list and reports.
+      security:
+        - UserId: []
+      responses:
+        "204":
+          description: Deleted
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/v1/reports/blogs:
+    get:
+      tags: [Reports]
+      summary: Export active blogs as CSV
+      description: |
+        Roles Admin, Reporter. Streamed, newest first. Soft-deleted blogs are excluded.
+        Cells that start with `=`, `+`, `-`, `@`, tab or CR are prefixed with `'` to
+        prevent spreadsheet formula injection. If the export fails after streaming has
+        started the connection is aborted rather than ended normally.
+      security:
+        - UserId: []
+      responses:
+        "200":
+          description: CSV file
+          headers:
+            Content-Disposition:
+              schema: { type: string, example: 'attachment; filename="blogs-20261105.csv"' }
+          content:
+            text/csv:
+              schema: { type: string }
+              example: |
+                id,title,author,description,views,created_at,updated_at,created_by,updated_by
+                01a1aade-509d-7cb7-8f37-269b76a71cdb,Hello,Sky,Intro,1,2026-11-05T08:40:58.781833Z,2026-11-05T08:40:58.781833Z,01a1aade-4e07-76cc-8242-3e3041b2f856,01a1aade-4e07-76cc-8242-3e3041b2f856
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Process is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      description: Pings PostgreSQL.
+      security: []
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ready }
+        "503":
+          description: PostgreSQL unreachable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: unavailable }
+components:
+  securitySchemes:
+    UserId:
+      type: apiKey
+      in: header
+      name: X-User-ID
+      description: UUID of a seeded user. Omit for anonymous access.
+  parameters:
+    BlogId:
+      name: id
+      in: path
+      required: true
+      description: Blog UUID in canonical 36-character form
+      schema: { type: string, format: uuid }
+  schemas:
+    CreateBlog:
+      type: object
+      additionalProperties: false
+      required: [title, author, content]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 255 }
+        author: { type: string, minLength: 1, maxLength: 100 }
+        content: { type: string, minLength: 1, maxLength: 100000 }
+        description: { type: string, maxLength: 500, default: "" }
+    UpdateBlog:
+      type: object
+      additionalProperties: false
+      required: [title, author, content]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 255 }
+        author: { type: string, minLength: 1, maxLength: 100 }
+        content: { type: string, minLength: 1, maxLength: 100000 }
+        description: { type: string, maxLength: 500, default: "" }
+        version:
+          type: integer
+          minimum: 1
+          description: Optional optimistic lock. 409 if it differs from the current version.
+    Blog:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        author: { type: string }
+        content: { type: string }
+        description: { type: string }
+        views: { type: integer, format: int64, minimum: 0, description: Unique daily views }
+        version: { type: integer }
+        created_at: { type: string, format: date-time, description: RFC3339 UTC }
+        updated_at: { type: string, format: date-time, description: RFC3339 UTC }
+        created_by: { type: string, format: uuid }
+        updated_by: { type: string, format: uuid }
+    BlogSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+    BlogList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BlogSummary" }
+        page: { type: integer }
+        limit: { type: integer }
+        has_next: { type: boolean }
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+              enum:
+                - VALIDATION_FAILED
+                - INVALID_JSON
+                - UNAUTHENTICATED
+                - FORBIDDEN
+                - NOT_FOUND
+                - METHOD_NOT_ALLOWED
+                - VERSION_CONFLICT
+                - PAYLOAD_TOO_LARGE
+                - UNSUPPORTED_MEDIA_TYPE
+                - SERVICE_UNAVAILABLE
+                - INTERNAL_ERROR
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  message: { type: string }
+            request_id: { type: string }
+  responses:
+    ValidationFailed:
+      description: Invalid input (bad UUID, pagination, body field, unknown field, malformed JSON)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            error:
+              code: VALIDATION_FAILED
+              message: invalid request
+              details: [{ field: title, message: is required }]
+              request_id: a80dba855a5f03ec
+    Unauthenticated:
+      description: Malformed or unknown X-User-ID, or anonymous caller without the permission
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Authenticated but the role lacks the permission
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Blog does not exist or is soft-deleted
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PayloadTooLarge:
+      description: Request body larger than 1 MB
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UnsupportedMedia:
+      description: Content-Type is not application/json
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unavailable:
+      description: PostgreSQL (the source of truth) is unavailable
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

@@ -14,22 +14,22 @@ const (
 type Permission string
 
 const (
-	PermBlogRead   Permission = "blog:read"
-	PermBlogCreate Permission = "blog:create"
-	PermBlogUpdate Permission = "blog:update"
-	PermBlogDelete Permission = "blog:delete"
-	PermBlogExport Permission = "blog:export"
+	PermBlogRead     Permission = "blog:read"
+	PermBlogCreate   Permission = "blog:create"
+	PermBlogUpdate   Permission = "blog:update"
+	PermBlogDelete   Permission = "blog:delete"
+	PermReportExport Permission = "report:export"
 )
 
 // rolePermissions is the permission matrix from the design (section 11).
 var rolePermissions = map[Role]map[Permission]bool{
 	RoleAdmin: {
 		PermBlogRead: true, PermBlogCreate: true, PermBlogUpdate: true,
-		PermBlogDelete: true, PermBlogExport: true,
+		PermBlogDelete: true, PermReportExport: true,
 	},
 	RoleEditor:   {PermBlogRead: true, PermBlogCreate: true, PermBlogUpdate: true},
 	RoleReader:   {PermBlogRead: true},
-	RoleReporter: {PermBlogRead: true, PermBlogExport: true},
+	RoleReporter: {PermBlogRead: true, PermReportExport: true},
 }
 
 // anonymousPermissions applies to requests without an authenticated user.

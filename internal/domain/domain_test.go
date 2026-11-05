@@ -10,7 +10,7 @@ import (
 )
 
 func TestPermissionMatrix(t *testing.T) {
-	perms := []Permission{PermBlogRead, PermBlogCreate, PermBlogUpdate, PermBlogDelete, PermBlogExport}
+	perms := []Permission{PermBlogRead, PermBlogCreate, PermBlogUpdate, PermBlogDelete, PermReportExport}
 	uid := uuid.New()
 	tests := []struct {
 		name  string
@@ -18,11 +18,11 @@ func TestPermissionMatrix(t *testing.T) {
 		want  map[Permission]bool
 	}{
 		{"admin", Actor{ID: uid, Role: RoleAdmin}, map[Permission]bool{
-			PermBlogRead: true, PermBlogCreate: true, PermBlogUpdate: true, PermBlogDelete: true, PermBlogExport: true}},
+			PermBlogRead: true, PermBlogCreate: true, PermBlogUpdate: true, PermBlogDelete: true, PermReportExport: true}},
 		{"editor", Actor{ID: uid, Role: RoleEditor}, map[Permission]bool{
 			PermBlogRead: true, PermBlogCreate: true, PermBlogUpdate: true}},
 		{"reader", Actor{ID: uid, Role: RoleReader}, map[Permission]bool{PermBlogRead: true}},
-		{"reporter", Actor{ID: uid, Role: RoleReporter}, map[Permission]bool{PermBlogRead: true, PermBlogExport: true}},
+		{"reporter", Actor{ID: uid, Role: RoleReporter}, map[Permission]bool{PermBlogRead: true, PermReportExport: true}},
 		{"anonymous", Anonymous(), map[Permission]bool{PermBlogRead: true}},
 		{"unknown role", Actor{ID: uid, Role: "ghost"}, map[Permission]bool{}},
 	}
