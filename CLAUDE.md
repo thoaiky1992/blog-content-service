@@ -13,7 +13,7 @@ Build the phases in order (design.md §22). Phase 6 (unique view) is the most im
 
 ## Commands
 
-Phase 1 (bootstrap) is done: config, Gin server, slog JSON, `/healthz` + `/readyz` (pings PostgreSQL), graceful shutdown, Dockerfile, compose, Makefile. Required env vars are in `.env.example` (only `DATABASE_URL` is mandatory). `make build|run|test|test-race|vet|up|down` wrap the commands below. The compose `migrate` service is not there yet. It arrives with the migrations in Phase 2. Commands marked "not yet" depend on later phases.
+Phase 1 (bootstrap) is done: config, Gin server, slog JSON, `/healthz` + `/readyz` (pings PostgreSQL), graceful shutdown, Dockerfile, compose, Makefile. Required env vars are in `.env.example` (only `DATABASE_URL` is mandatory). `make build|run|test|test-race|vet|up|down` wrap the commands below. Phase 2 (database) is done too: Goose migrations in `migrations/` (users, blogs + partial index, blog_daily_views, seed users). Compose runs postgres → `migrate` (built from `Dockerfile.migrate`, goose only) → api. Seed users have fixed IDs `00000000-0000-0000-0000-00000000000{1..4}` = admin, editor, reader, reporter; use them as `X-User-ID`. Commands marked "not yet" depend on later phases.
 
 ```bash
 docker compose up --build                            # postgres (healthy) -> migrate (goose) -> api

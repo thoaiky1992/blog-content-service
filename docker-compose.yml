@@ -1,8 +1,7 @@
-# The `migrate` service (postgres healthy -> migrate -> api) is added in
-# Phase 2, together with the first migrations.
+# Startup order: postgres (healthy) -> migrate (goose up) -> api.
 services:
   postgres:
-    image: postgres:17
+    image: postgres:18
     container_name: postgres
     restart: always
     environment:
@@ -12,7 +11,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - volume_pgdata:/var/lib/postgresql/18/docker
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U blog -d blog"]
       interval: 2s
@@ -22,11 +21,27 @@ services:
     networks:
       - app-network
 
-  api:
-    build: .
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    container_name: migrate
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: postgres://blog:blog@postgres:5432/blog?sslmode=disable
+    command: ["up"]
+    restart: "no"
+    networks:
+      - app-network
+
+  api:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     container_name: api
     restart: unless-stopped
     environment:
@@ -41,8 +56,8 @@ services:
       - app-network
 
 volumes:
-  pgdata:
-
+  volume_pgdata:
+    name: pgdata
 
 networks:
   app-network:
