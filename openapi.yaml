@@ -3,18 +3,19 @@ info:
   title: Blog Content Service
   version: 1.0.0
   description: |
-    REST API for blog content with role-based access, soft delete, CSV export and
+    REST API for blog content with role-based access, soft delete, CSV export, and
     unique daily view counting (one view per blog + client IP + UTC day).
 
-    **Authentication is mocked.** Send `X-User-ID: <uuid>` of a seeded user. Without the
-    header the caller is anonymous. A malformed or unknown ID returns 401. The role is
-    always read from the database.
+    **Authentication is mocked.** Send `X-User-ID: <uuid>` for a seeded user. Without
+    the header, the caller is anonymous. A malformed or unknown ID returns 401. The role
+    is always read from the database.
 
-    An anonymous caller lacking a permission gets 401; an authenticated caller gets 403.
+    An anonymous caller lacking a permission receives 401; an authenticated caller
+    receives 403. CORS allows every origin and handles preflight requests with 204.
 servers:
   - url: http://localhost:8080
 tags:
-  - name: Blogs
+  - name: Blog
   - name: Reports
   - name: Health
 security:
@@ -23,9 +24,9 @@ security:
 paths:
   /api/v1/blogs:
     get:
-      tags: [Blogs]
+      tags: [Blog]
       summary: List blogs
-      description: Active (not soft-deleted) blogs, newest first. Never increases view counters.
+      description: Active blogs, newest first. Never increments view counters.
       parameters:
         - name: page
           in: query
@@ -43,9 +44,9 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "503": { $ref: "#/components/responses/Unavailable" }
     post:
-      tags: [Blogs]
+      tags: [Blog]
       summary: Create a blog
-      description: Roles Editor, Admin.
+      description: Available to Editor and Admin roles.
       security:
         - UserId: []
       requestBody:
@@ -72,15 +73,15 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BlogId"
     get:
-      tags: [Blogs]
-      summary: Get blog detail
+      tags: [Blog]
+      summary: Get blog details
       description: |
         Records one unique daily view for (blog, UTC date, client IP). Repeated reads by
-        the same client on the same UTC day do not increase `views`. If the view cannot
-        be recorded the request fails with 503 instead of returning 200 with a lost view.
+        the same client on the same UTC day do not increment `views`. If the view cannot
+        be recorded, the request returns 503 instead of returning 200 and losing a view.
       responses:
         "200":
-          description: The blog
+          description: Blog
           headers:
             Cache-Control:
               schema: { type: string, example: no-store }
@@ -92,12 +93,12 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
     put:
-      tags: [Blogs]
+      tags: [Blog]
       summary: Replace a blog's editable fields
       description: |
-        Roles Editor, Admin (any editor may update any blog). Replaces title, author,
-        content and description. A soft-deleted blog is never revived: it returns 404.
-        If `version` is sent and does not match, the response is 409.
+        Available to Editor and Admin; any Editor may update any blog. Replaces title,
+        author, content, and description. A soft-deleted blog is never revived and
+        returns 404. If `version` is supplied and does not match, the response is 409.
       security:
         - UserId: []
       requestBody:
@@ -124,9 +125,9 @@ paths:
         "415": { $ref: "#/components/responses/UnsupportedMedia" }
         "503": { $ref: "#/components/responses/Unavailable" }
     delete:
-      tags: [Blogs]
-      summary: Soft delete a blog
-      description: Admin only. The blog disappears from detail, list and reports.
+      tags: [Blog]
+      summary: Soft delete blog
+      description: Admin only. The blog disappears from details, lists, and reports.
       security:
         - UserId: []
       responses:
@@ -142,15 +143,15 @@ paths:
       tags: [Reports]
       summary: Export active blogs as CSV
       description: |
-        Roles Admin, Reporter. Streamed, newest first. Soft-deleted blogs are excluded.
-        Cells that start with `=`, `+`, `-`, `@`, tab or CR are prefixed with `'` to
-        prevent spreadsheet formula injection. If the export fails after streaming has
-        started the connection is aborted rather than ended normally.
+        Available to Admin and Reporter. Streams at most 10 active blogs, newest first.
+        Soft-deleted blogs are excluded. Cells beginning with `=`, `+`, `-`, `@`, tab,
+        or CR are prefixed with `'` to prevent spreadsheet formula injection. If export
+        fails after streaming begins, the connection is aborted rather than ended normally.
       security:
         - UserId: []
       responses:
         "200":
-          description: CSV file
+          description: File CSV
           headers:
             Content-Disposition:
               schema: { type: string, example: 'attachment; filename="blogs-20261105.csv"' }
@@ -159,7 +160,7 @@ paths:
               schema: { type: string }
               example: |
                 id,title,author,description,views,created_at,updated_at,created_by,updated_by
-                01a1aade-509d-7cb7-8f37-269b76a71cdb,Hello,Sky,Intro,1,2026-11-05T08:40:58.781833Z,2026-11-05T08:40:58.781833Z,01a1aade-4e07-76cc-8242-3e3041b2f856,01a1aade-4e07-76cc-8242-3e3041b2f856
+                01a1aade-509d-7cb7-8f37-269b76a71cdb,Hello,Sky,Introduction,1,2026-11-05T08:40:58.781833Z,2026-11-05T08:40:58.781833Z,01a1aade-4e07-76cc-8242-3e3041b2f856,01a1aade-4e07-76cc-8242-3e3041b2f856
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/Unavailable" }
@@ -170,7 +171,7 @@ paths:
       security: []
       responses:
         "200":
-          description: Process is up
+          description: Process is running
           content:
             application/json:
               schema:
@@ -181,7 +182,7 @@ paths:
     get:
       tags: [Health]
       summary: Readiness probe
-      description: Pings PostgreSQL.
+      description: Ping PostgreSQL.
       security: []
       responses:
         "200":
@@ -193,7 +194,7 @@ paths:
                 properties:
                   status: { type: string, example: ready }
         "503":
-          description: PostgreSQL unreachable
+          description: PostgreSQL is unreachable
           content:
             application/json:
               schema:
@@ -236,7 +237,7 @@ components:
         version:
           type: integer
           minimum: 1
-          description: Optional optimistic lock. 409 if it differs from the current version.
+          description: Optional optimistic lock. Returns 409 when it differs from the current version.
     Blog:
       type: object
       properties:
@@ -298,7 +299,7 @@ components:
             request_id: { type: string }
   responses:
     ValidationFailed:
-      description: Invalid input (bad UUID, pagination, body field, unknown field, malformed JSON)
+      description: Invalid input such as UUID, pagination, body fields, unknown fields, or malformed JSON
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -309,12 +310,12 @@ components:
               details: [{ field: title, message: is required }]
               request_id: a80dba855a5f03ec
     Unauthenticated:
-      description: Malformed or unknown X-User-ID, or anonymous caller without the permission
+      description: Malformed or unknown X-User-ID, or an anonymous caller lacking permission
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     Forbidden:
-      description: Authenticated but the role lacks the permission
+      description: Authenticated caller whose role lacks permission
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -334,7 +335,7 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     Unavailable:
-      description: PostgreSQL (the source of truth) is unavailable
+      description: PostgreSQL, the source of truth, is unavailable
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

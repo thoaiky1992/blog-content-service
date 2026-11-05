@@ -12,9 +12,9 @@ import (
 	"github.com/sky/blog-service/internal/domain"
 )
 
-// mapErr classifies infrastructure errors. Connectivity/availability failures
-// become domain.ErrUnavailable (HTTP 503); anything else is returned wrapped
-// and unclassified (HTTP 500). Context cancellation passes through untouched.
+// mapErr classifies infrastructure errors. Connectivity and availability failures become
+// domain.ErrUnavailable (HTTP 503); all other errors are wrapped and remain unclassified
+// (HTTP 500). Context cancellation passes through unchanged.
 func mapErr(op string, err error) error {
 	if err == nil {
 		return nil
@@ -39,13 +39,13 @@ func isUnavailable(err error) bool {
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		// 08 connection exception, 53 insufficient resources,
-		// 57P01-03 admin shutdown / crash shutdown / cannot connect now.
+		// 08: connection exception; 53: insufficient resources;
+		// 57P01-03: admin shutdown, crash shutdown, or cannot connect now.
 		return strings.HasPrefix(pgErr.Code, "08") ||
 			strings.HasPrefix(pgErr.Code, "53") ||
 			pgErr.Code == "57P01" || pgErr.Code == "57P02" || pgErr.Code == "57P03"
 	}
-	// pgxpool: "closed pool" and similar plain errors.
+	// pgxpool returns "closed pool" and similar plain errors.
 	msg := err.Error()
 	return strings.Contains(msg, "closed pool") || strings.Contains(msg, "conn closed")
 }

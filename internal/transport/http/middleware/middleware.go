@@ -1,5 +1,5 @@
-// Package middleware holds Gin middleware: recover, request-id, access log,
-// client IP resolution and mock authentication.
+// Package middleware holds Gin middleware: recovery, request IDs, access logging, CORS,
+// client IP resolution, and mock authentication.
 package middleware
 
 import (
@@ -18,9 +18,28 @@ import (
 
 const requestIDHeader = "X-Request-ID"
 
+// CORS allows API calls from any origin. Preflight requests stop here so they do not run
+// authentication or application handlers.
+func CORS() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		headers := c.Writer.Header()
+		headers.Set("Access-Control-Allow-Origin", "*")
+		headers.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		headers.Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-Request-ID, X-User-ID")
+		headers.Set("Access-Control-Expose-Headers", "Content-Disposition, Location, X-Request-ID")
+		headers.Set("Access-Control-Max-Age", "86400")
+
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
+	}
+}
+
 // Recover turns panics into a 500 envelope and logs the stack. A deliberate
-// http.ErrAbortHandler (used to abort a half-written CSV stream) is re-raised
-// so net/http closes the connection instead of sending a "complete" body.
+// http.ErrAbortHandler, used to abort a partially written CSV stream, is re-raised so
+// net/http closes the connection instead of sending a body that appears complete.
 func Recover(log *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
@@ -45,7 +64,7 @@ func Recover(log *slog.Logger) gin.HandlerFunc {
 	}
 }
 
-// RequestID assigns each request an ID, reusing a sane incoming one.
+// RequestID assigns an ID to every request and reuses a valid incoming ID.
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.GetHeader(requestIDHeader)
@@ -60,8 +79,8 @@ func RequestID() gin.HandlerFunc {
 	}
 }
 
-// validRequestID accepts short printable tokens only, so a client cannot
-// inject newlines or huge values into logs.
+// validRequestID accepts only short printable tokens so a client cannot inject newlines
+// or huge values into logs.
 func validRequestID(id string) bool {
 	if id == "" || len(id) > 64 {
 		return false
@@ -76,7 +95,7 @@ func validRequestID(id string) bool {
 	return true
 }
 
-// AccessLog writes one structured log line per request. It never logs raw IPs.
+// AccessLog writes one structured log entry per request and never logs raw IPs.
 func AccessLog(log *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -86,7 +105,7 @@ func AccessLog(log *slog.Logger) gin.HandlerFunc {
 			route = "unmatched"
 		}
 		size := c.Writer.Size()
-		if size < 0 { // gin reports -1 when nothing was written (e.g. 204)
+		if size < 0 { // Gin reports -1 when nothing was written, for example a 204 response.
 			size = 0
 		}
 		attrs := []any{
@@ -103,6 +122,6 @@ func AccessLog(log *slog.Logger) gin.HandlerFunc {
 		if code := httpx.ErrorCode(c); code != "" {
 			attrs = append(attrs, "error_code", code)
 		}
-		log.Info("request", attrs...)
+		log.Info("HTTP request", attrs...)
 	}
 }

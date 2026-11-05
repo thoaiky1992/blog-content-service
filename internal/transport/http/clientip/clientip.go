@@ -7,13 +7,13 @@ import (
 	"strings"
 )
 
-// Resolver implements the trusted-proxy rule from the design (section 12).
+// Resolver implements the trusted-proxy rule.
 type Resolver struct {
 	trusted []netip.Prefix
 }
 
-// New builds a Resolver. With no trusted prefixes, forwarded headers are never
-// trusted and the direct peer address is always used.
+// New builds a Resolver. With no trusted prefixes, forwarded headers are never trusted
+// and the direct peer address is always used.
 func New(trusted []netip.Prefix) *Resolver { return &Resolver{trusted: trusted} }
 
 func (r *Resolver) isTrusted(a netip.Addr) bool {
@@ -27,17 +27,17 @@ func (r *Resolver) isTrusted(a netip.Addr) bool {
 
 // Resolve returns the client IP.
 //
-//   - If the direct peer is not trusted, forwarded headers are ignored (they
-//     could be forged) and the peer address is returned.
-//   - If it is trusted, X-Forwarded-For is walked from right to left. Trusted
-//     hops are skipped and the first untrusted hop is the client. The left-most
-//     entry is never trusted blindly.
-//   - If an entry is not a valid IP, the header is considered corrupt and the
-//     peer address is returned (safe: never an attacker-chosen value).
-//   - If every hop is trusted, the left-most hop is returned.
+//   - If the direct peer is not trusted, forwarded headers are ignored because they may
+//     be forged, and the peer address is returned.
+//   - If the peer is trusted, X-Forwarded-For is traversed from right to left. Trusted
+//     hops are skipped, and the first untrusted hop is the client. The leftmost entry is
+//     never trusted blindly.
+//   - If an entry is not a valid IP, the header is considered corrupt and the safe peer
+//     address is returned instead of an attacker-controlled value.
+//   - If every hop is trusted, the leftmost hop is returned.
 //
-// xff holds every X-Forwarded-For header value of the request.
-// ok is false only when the peer address itself cannot be parsed.
+// xff contains every X-Forwarded-For header value. ok is false only when the peer
+// address itself cannot be parsed.
 func (r *Resolver) Resolve(remoteAddr string, xff []string) (ip netip.Addr, ok bool) {
 	peer, ok := parsePeer(remoteAddr)
 	if !ok {
@@ -85,8 +85,8 @@ func parsePeer(remoteAddr string) (netip.Addr, bool) {
 	return a, true
 }
 
-// parseIP parses an IP, normalizing IPv4-mapped IPv6 to IPv4 and dropping any
-// IPv6 zone so equal addresses always compare equal.
+// parseIP parses an IP, normalizes IPv4-mapped IPv6 to IPv4, and removes IPv6 zones so
+// equivalent addresses always compare equal.
 func parseIP(s string) (netip.Addr, error) {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(strings.TrimSuffix(s, "]"), "[")

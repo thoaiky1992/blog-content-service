@@ -17,7 +17,7 @@ import (
 	"github.com/sky/blog-service/internal/transport/http/httpx"
 )
 
-// MaxBodyBytes is the request body limit (1 MB).
+// MaxBodyBytes is the 1 MB request body limit.
 const MaxBodyBytes = 1 << 20
 
 // createRequest is the POST body. Unknown fields are rejected.
@@ -28,8 +28,8 @@ type createRequest struct {
 	Description string `json:"description"`
 }
 
-// updateRequest is the PUT body: it replaces every editable field. Version is
-// optional optimistic locking.
+// updateRequest is the PUT body and replaces every editable field. Version is an
+// optional optimistic lock.
 type updateRequest struct {
 	Title       string `json:"title"`
 	Author      string `json:"author"`
@@ -90,7 +90,7 @@ func newListResponse(p domain.BlogPage) listResponse {
 	return listResponse{Items: items, Page: p.Page, Limit: p.Limit, HasNext: p.HasNext}
 }
 
-// formatTime renders RFC3339 in UTC (fractional seconds only when non-zero).
+// formatTime renders RFC3339 in UTC, including fractional seconds only when non-zero.
 func formatTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
 
 // parseID accepts only the canonical 36-character UUID form.
@@ -103,8 +103,8 @@ func parseID(c *gin.Context) (uuid.UUID, error) {
 	return id, nil
 }
 
-// parsePagination reads page/limit, applying defaults for absent params.
-// Range checks (page>=1, 1<=limit<=100) happen in the domain.
+// parsePagination reads page and limit and applies defaults for absent parameters.
+// The domain checks page >= 1 and 1 <= limit <= 100.
 func parsePagination(c *gin.Context) (page, limit int, err error) {
 	ve := &domain.ValidationError{}
 	page, limit = domain.DefaultPage, domain.DefaultLimit
@@ -124,8 +124,8 @@ func parsePagination(c *gin.Context) (page, limit int, err error) {
 	return page, limit, nil
 }
 
-// decodeJSON enforces Content-Type, the body size limit, unknown-field
-// rejection and a single JSON value. Errors are ready for httpx.WriteError.
+// decodeJSON enforces Content-Type, body size, unknown-field rejection, and a single
+// JSON value. Returned errors are ready for httpx.WriteError.
 func decodeJSON(c *gin.Context, dst any) error {
 	mt, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 	if err != nil || mt != "application/json" {

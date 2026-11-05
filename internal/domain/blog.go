@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Validation limits. They mirror the CHECK constraints in the migrations.
+// Validation limits mirror the CHECK constraints in the migrations.
 const (
 	MaxTitleLen       = 255
 	MaxAuthorLen      = 100
@@ -20,7 +20,7 @@ const (
 	MaxLimit     = 100
 )
 
-// Blog is a full blog record.
+// Blog is a complete blog record.
 type Blog struct {
 	ID          uuid.UUID
 	Title       string
@@ -37,14 +37,14 @@ type Blog struct {
 	DeletedBy   *uuid.UUID
 }
 
-// BlogSummary is the list item.
+// BlogSummary is a list item.
 type BlogSummary struct {
 	ID          uuid.UUID
 	Title       string
 	Description string
 }
 
-// BlogInput holds the editable fields (create and PUT replace all of them).
+// BlogInput holds editable fields; create and PUT replace all of them.
 type BlogInput struct {
 	Title       string
 	Author      string
@@ -52,8 +52,8 @@ type BlogInput struct {
 	Description string
 }
 
-// Validate trims title and author and checks all limits. It returns the
-// normalized input, or a *ValidationError listing every invalid field.
+// Validate trims title and author and checks all limits. It returns normalized input or
+// a *ValidationError containing every invalid field.
 func (in BlogInput) Validate() (BlogInput, error) {
 	in.Title = strings.TrimSpace(in.Title)
 	in.Author = strings.TrimSpace(in.Author)
@@ -88,7 +88,7 @@ type PageRequest struct {
 	Limit int
 }
 
-// NewPageRequest validates strictly: callers apply defaults before calling.
+// NewPageRequest validates strictly; callers apply defaults before calling it.
 func NewPageRequest(page, limit int) (PageRequest, error) {
 	ve := &ValidationError{}
 	if page < 1 {
@@ -115,7 +115,7 @@ type BlogPage struct {
 }
 
 func itoa(n int) string {
-	// small local helper to keep this package free of fmt/strconv noise
+	// Small local helper to keep this package free of fmt/strconv noise.
 	if n == 0 {
 		return "0"
 	}

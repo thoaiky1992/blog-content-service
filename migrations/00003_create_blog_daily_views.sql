@@ -2,10 +2,10 @@
 CREATE TABLE blog_daily_views (
     blog_id     uuid        NOT NULL REFERENCES blogs(id),
     view_date   date        NOT NULL,
-    ip_hash     bytea       NOT NULL CHECK (octet_length(ip_hash) = 16),
+    ip_address  inet        NOT NULL,
     created_at  timestamptz NOT NULL,
 
-    PRIMARY KEY (blog_id, view_date, ip_hash)
+    PRIMARY KEY (blog_id, view_date, ip_address)
 );
 
 -- +goose Down

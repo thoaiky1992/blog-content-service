@@ -1,11 +1,10 @@
-// Package apptest provides in-memory implementations of the app ports for
-// tests that need real services without a database (handler tests).
+// Package apptest provides in-memory implementations of app ports for tests that need
+// real services without a database, such as handler tests.
 package apptest
 
 import (
 	"context"
 	"errors"
-	"net/netip"
 	"sync"
 	"time"
 
@@ -20,9 +19,9 @@ type Repo struct {
 	mu    sync.Mutex
 	Blogs map[uuid.UUID]*domain.Blog
 	Order []uuid.UUID
-	// StreamFailAfter, if > 0, makes StreamActive fail after that many rows.
+	// StreamFailAfter > 0 makes StreamActive fail after that many rows.
 	StreamFailAfter int
-	// StreamErr, if set, makes StreamActive fail before producing any row.
+	// StreamErr makes StreamActive fail before producing a row when set.
 	StreamErr error
 }
 
@@ -46,7 +45,7 @@ func (r *Repo) GetActive(_ context.Context, id uuid.UUID) (domain.Blog, error) {
 	return *b, nil
 }
 
-// ListActive returns newest first, like the real query.
+// ListActive returns newest blogs first, like the real query.
 func (r *Repo) ListActive(_ context.Context, limit, offset int) ([]domain.BlogSummary, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -112,7 +111,7 @@ func (r *Repo) StreamActive(_ context.Context, fn func(app.ReportRow) error) err
 
 	for i, row := range rows {
 		if failAfter > 0 && i >= failAfter {
-			return errors.New("simulated database failure mid-stream")
+			return errors.New("simulated database failure during streaming")
 		}
 		if err := fn(row); err != nil {
 			return err
@@ -121,12 +120,12 @@ func (r *Repo) StreamActive(_ context.Context, fn func(app.ReportRow) error) err
 	return nil
 }
 
-// Views is an in-memory app.ViewStore that dedups on the same key as the PK.
+// Views is an in-memory app.ViewStore that deduplicates on the same key as the primary key.
 type Views struct {
 	repo *Repo
 	mu   sync.Mutex
 	seen map[domain.ViewKey]bool
-	// Err, if set, is returned by every call (simulates PostgreSQL down).
+	// Err is returned by every call when set, simulating a PostgreSQL outage.
 	Err error
 }
 
@@ -155,7 +154,7 @@ func (v *Views) RecordUniqueView(_ context.Context, key domain.ViewKey, _ time.T
 // Users is an in-memory app.UserRepository.
 type Users struct {
 	byID map[uuid.UUID]domain.Actor
-	// Err, if set, is returned by every call.
+	// Err is returned by every call when set.
 	Err error
 }
 
@@ -176,13 +175,4 @@ func (u *Users) GetByID(_ context.Context, id uuid.UUID) (domain.Actor, error) {
 		return domain.Actor{}, domain.ErrNotFound
 	}
 	return a, nil
-}
-
-// Hasher maps each IP to a distinct, deterministic hash (no secret needed).
-type Hasher struct{}
-
-func (Hasher) Hash(ip netip.Addr) domain.IPHash {
-	var h domain.IPHash
-	copy(h[:], ip.WithZone("").Unmap().AsSlice())
-	return h
 }

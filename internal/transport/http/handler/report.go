@@ -13,15 +13,15 @@ import (
 	"github.com/sky/blog-service/internal/transport/http/httpx"
 )
 
-// csvFlushEvery bounds how many rows are buffered before being sent.
-const csvFlushEvery = 500
+// csvFlushEvery limits the number of rows buffered before they are sent.
+const csvFlushEvery = 100 // 100 rows is a reasonable compromise between memory usage and network efficiency.
 
 var csvHeader = []string{
 	"id", "title", "author", "description", "views",
 	"created_at", "updated_at", "created_by", "updated_by",
 }
 
-// Report serves the CSV export.
+// Report serves CSV exports.
 type Report struct {
 	reports *app.ReportService
 	clock   app.Clock
@@ -31,13 +31,13 @@ func NewReport(reports *app.ReportService, clock app.Clock) *Report {
 	return &Report{reports: reports, clock: clock}
 }
 
-// Export: GET /api/v1/reports/blogs. Streams active blogs as CSV straight from
-// the database cursor to the response; nothing is accumulated in memory.
+// Export handles GET /api/v1/reports/blogs. It streams active blogs as CSV directly from
+// the database cursor to the response without accumulating the full result in memory.
 //
-// Permission is checked before the first row, so a forbidden caller still gets
-// a normal JSON 403. Once streaming has started the status is already 200, so
-// a later failure aborts the connection: the client sees a truncated transfer
-// instead of a file that looks complete.
+// Permission is checked before the first row, so a forbidden caller still receives a
+// normal JSON 403. Once streaming starts, the status is already 200; a later failure
+// aborts the connection so the client sees a truncated transfer rather than a file that
+// appears complete.
 func (h *Report) Export(c *gin.Context) {
 	var (
 		w       *csv.Writer
@@ -87,27 +87,26 @@ func (h *Report) Export(c *gin.Context) {
 	})
 
 	if err == nil {
-		err = start() // an empty report still returns the header row
+		err = start() // An empty report still returns the header row.
 	}
 	if err != nil {
 		if !started {
 			httpx.WriteError(c, err)
 			return
 		}
-		slog.Error("csv export aborted mid-stream",
+		slog.Error("CSV export aborted during streaming",
 			"request_id", httpx.RequestID(c), "rows_sent", rows, "error", err)
 		panic(http.ErrAbortHandler)
 	}
 	w.Flush()
 	if err := w.Error(); err != nil {
-		slog.Error("csv export flush failed", "request_id", httpx.RequestID(c), "error", err)
+		slog.Error("CSV export flush failed", "request_id", httpx.RequestID(c), "error", err)
 		panic(http.ErrAbortHandler)
 	}
 }
 
-// sanitizeCell defuses CSV/formula injection: a cell that a spreadsheet could
-// interpret as a formula (leading = + - @, or tab/CR which some apps strip
-// before evaluating) is prefixed with a single quote.
+// sanitizeCell prevents CSV/formula injection. A cell that a spreadsheet could
+// interpret as a formula, beginning with = + - @, tab, or CR, is prefixed with a quote.
 func sanitizeCell(s string) string {
 	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
 		return "'" + s

@@ -1,69 +1,100 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file guides coding agents working in this repository.
 
 ## Project status
 
-This is a technical assignment: a Go **Blog Content Service**. Right now the repo has only specs, no code yet:
+This is a complete Go Blog Content Service with APIs, migrations, PostgreSQL and Redis
+adapters, unit tests, integration tests, load tests, OpenAPI, and architecture
+documentation. Do not reference the former files under `docs/` or `requirement.md`; they
+are no longer part of the current repository structure.
 
-- [requirement.md](requirement.md): the original assignment. It lists functional rules, required tests, deliverables, grading weights and bonus challenges.
-- [docs/design.md](docs/design.md): the frozen design and phased implementation plan (Phase 0–11). **This is the source of truth.** When the design and the code disagree, follow the design or update it on purpose. Labels used there: `[REQUIRED]`, `[BONUS]`, and `[OPTIMIZATION]` (only after a benchmark shows the need).
+When changing an endpoint, update `README.md`, `openapi.yaml`, and `ARCHITECTURE.md` when
+the architectural flow changes. No automated check currently verifies that code and
+documentation remain synchronized.
 
-Build the phases in order (design.md §22). Phase 6 (unique view) is the most important one.
-
-## Commands
-
-Phase 1 (bootstrap) is done: config, Gin server, slog JSON, `/healthz` + `/readyz` (pings PostgreSQL), graceful shutdown, Dockerfile, compose, Makefile. Required env vars are in `.env.example` (only `DATABASE_URL` is mandatory). `make build|run|test|test-race|vet|up|down` wrap the commands below. Phase 2 (database) is done too: Goose migrations in `migrations/` (users, blogs + partial index, blog_daily_views, seed users). Compose runs postgres → `migrate` (built from `Dockerfile.migrate`, goose only) → api. Seed users (admin, editor, reader, reporter) get DB-generated `uuidv7()` IDs, so look them up (`SELECT id, role FROM users`) to use as `X-User-ID`. Phase 3 (domain/app) is done: domain types, permission matrix, validation, ViewKey, ports in `internal/app/ports.go`, BlogService/ViewService/ReportService, `platform/clock`, all unit-tested with in-memory fakes. Anonymous lacking a permission gets `ErrUnauthenticated` (401), an authenticated user gets `ErrForbidden` (403). `limit` outside 1..100 or `page` < 1 is a validation error, not clamped. Phase 4 (Postgres adapter) is done: `internal/adapter/postgres` (BlogRepo, ViewStore, UserRepo, `mapErr` turning connectivity errors into `ErrUnavailable`). Integration tests in `test/integration` start `postgres:18` via testcontainers, apply `migrations/` with goose, and skip themselves if Docker is down; run one with `go test ./test/integration/... -run TestRecordUniqueViewSameIPConcurrent -v`. Phases 5–8 are done too: Gin handlers, mock-auth/client-ip middleware, `platform/clientip` + `platform/iphash` (required `IP_HASH_SECRET`), streamed CSV, README, `docs/architecture.md`, `docs/database.md`, `docs/technical-decisions.md`, and a validated `openapi.yaml`. Only Phases 9–11 remain (k6 load tests + `docs/performance-report.md`, benchmark-driven optimizations, final verification), so no TPS number may be claimed yet. Error mapping and context accessors live in `transport/http/httpx` (not `transport/http/errors.go`) to avoid an import cycle. `internal/app/apptest` holds exported in-memory fakes used by the handler tests. When you change an endpoint, update `openapi.yaml` and README by hand: nothing checks them against the code. Commands marked "not yet" depend on later phases.
+## Common commands
 
 ```bash
-docker compose up --build                            # postgres (healthy) -> migrate (goose) -> api
-go test ./...                                        # unit + handler tests
-go test -race ./...                                  # required in final verification
-go test ./internal/app -run TestName -v              # single test
-go test ./test/integration/... -run TestName -v      # integration tests (testcontainers-go, needs Docker)
+docker compose up --build
+go test ./test/unit/...
+go test ./test/integration/...
+go test ./...
+go test -race ./...
+go vet ./...
 ```
 
-Load tests use k6 with arrival-rate scenarios. They live in `loadtest/k6/`, and the seed scripts live in `loadtest/seed/`.
+Load tests use k6. Scenarios live in `loadtest/k6/`, and deterministic seed data lives
+in `loadtest/seed/`.
 
-## Stack
+## Technology and architecture
 
-Go, Gin, PostgreSQL, pgx/v5 + pgxpool, Goose migrations, **hand-written SQL (no ORM)**, `log/slog` JSON, testcontainers-go, k6. Redis is an optional bonus only. The baseline must not depend on it.
+The stack is Go, Gin, PostgreSQL, Redis, pgx/v5 + pgxpool, Goose migrations,
+hand-written SQL, `log/slog` JSON, and k6. PostgreSQL is the source of truth. Redis only
+caches actors and committed view markers; the service remains correct when `REDIS_ADDR`
+is empty.
 
-## Architecture (hexagonal)
+Dependency direction:
 
-`transport/http` (Gin handlers, DTOs, middleware) → `app` (use cases: BlogService, ViewService, ReportService; **authorization lives here**, not in handlers) → `domain` (Blog, Actor/Role/Permission, ViewKey, domain errors) ← `adapter/postgres` implements the interfaces declared in `app/ports.go`.
+```text
+transport/http → app → domain ← adapter/postgres
+                         ↑     ← adapter/redis
+```
 
-- `domain` must not import Gin, pgx, Redis or HTTP DTOs.
-- Interfaces are defined where they are consumed (in `app`). Do not add a generic repository, UnitOfWork, event bus, CQRS or distributed locks.
-- `platform/` holds small helpers: `clientip` (trusted-proxy resolver), `iphash` (HMAC), `clock` (injectable UTC clock for date-boundary tests).
-- Middleware order: recover → request-id → access log → client-ip → mock auth.
+- `domain` must not import Gin, pgx, Redis, or HTTP DTOs.
+- Interfaces are declared where they are consumed in `app/ports.go`.
+- Do not introduce a generic repository, UnitOfWork, event bus, CQRS, or distributed
+  lock without an explicit requirement.
+- `internal/transport/http/clientip` handles trusted proxies;
+  `internal/adapter/clock` implements the injectable UTC clock port.
+- Middleware order is recover → request-id → access log → CORS → client-ip → mock auth.
 
-## Core invariants (don't break these)
+## Core invariants
 
-**Unique daily view = (blog_id, UTC `DATE`, ip_hash).** Correctness comes from the PostgreSQL PK on `blog_daily_views`, never from a Go mutex, a SELECT-then-INSERT check or Redis. The dedup insert and the counter increment run in **one SQL statement**: a CTE that targets the active blog, then `INSERT ... ON CONFLICT DO NOTHING RETURNING`, then `UPDATE blogs SET views = views + 1 WHERE id = (SELECT blog_id FROM inserted)`. The full SQL is in design.md §6.1. The invariant is `blogs.views == COUNT(blog_daily_views WHERE blog_id = X)`.
+**Unique daily view = (`blog_id`, UTC date, `ip_address`).** The PostgreSQL primary key
+on `blog_daily_views` prevents duplicates. One SQL statement uses a CTE to validate
+the active blog, run
+`INSERT ... ON CONFLICT DO NOTHING`, and increment `blogs.views` only when the insert
+succeeds and the blog is still active (`deleted_at IS NULL`). Do not replace this
+mechanism with a Go mutex, Redis lock, or SELECT-then-INSERT flow.
 
-- Only `GET /blogs/{id}` records a view. `GET /blogs` (list) never does.
-- If the blog is missing or deleted, return 404 and record no view. The view statement re-checks `deleted_at IS NULL` to close the race with a concurrent delete.
-- If the DB view write fails, return 503 (or 500). Never return 200 while silently dropping the view.
-- `view_date` is computed in the app from `clock.Now().UTC()`, not by DB `now()`.
-- Raw IPs are never stored or logged. Normalize with `netip.Addr.Unmap()`, then HMAC-SHA256 with a secret, truncated to 16 bytes.
+- Only `GET /blogs/{id}` records a view; list endpoints never do.
+- A missing or soft-deleted blog returns `404` and records no view.
+- A view-write failure returns `503` or `500`; never return `200` while silently losing
+  the view.
+- `view_date` comes from `clock.Now().UTC()` in the application layer.
+- PostgreSQL stores the normalized address as `inet`; Redis keys contain only a
+  truncated SHA-256 hash of the address. Access logs never contain raw IP addresses.
+- Redis markers are written only after PostgreSQL succeeds. Cache misses and failures
+  must fall back to PostgreSQL.
 
-**Soft delete:** every public query and the CSV report filter on `deleted_at IS NULL`. Repo methods are named for this (`GetActive`, `ListActive`, `StreamActive`, `UpdateActive`, `DeleteActive`). Update and delete include `AND deleted_at IS NULL` so a deleted blog is never revived. The baseline has no detail/list cache, so deleted blogs can't leak through a stale cache.
+**Soft delete:** every public query and CSV report must filter on
+`deleted_at IS NULL`. Update and delete statements must use the same condition so a
+deleted blog cannot be revived.
 
-**Client IP:** forwarded headers are trusted only when the direct peer is in the `TRUSTED_PROXIES` CIDR list (empty by default). Walk XFF from right to left, skip trusted hops, and take the first untrusted one. Never trust the left-most XFF blindly.
+**Client IP:** forwarded headers are trusted only when the direct peer belongs to
+`TRUSTED_PROXIES`. Walk `X-Forwarded-For` from right to left, skip trusted hops, and use
+the first untrusted hop.
 
-**Mock auth:** the `X-User-ID: <uuid>` header is looked up in the `users` table. Missing header → Anonymous. Malformed or unknown ID → 401. The role always comes from the DB, never from the client. The permission matrix is in design.md §11. Editors may update any blog (there is no ownership rule).
+**Mock authentication:** `X-User-ID` is resolved through the `users` table. A missing
+header means Anonymous; a malformed or unknown UUID returns `401`. Roles always come
+from the database, never from the client.
 
 ## API conventions
 
-- List uses `page` (≥1) and `limit` (default 20, max 100). It fetches `limit+1` rows to compute `has_next` and returns no `total` (no `COUNT(*)`). Items contain `id, title, description`. Order is `created_at DESC, id DESC`, backed by the partial index `blogs_active_created_idx`.
-- PUT replaces all editable fields (title, author, content, description). `version` gets incremented; optional optimistic checking returns 409.
-- JSON: unknown fields → 400. The body limit is 1 MB (→ 413). Validation limits are in design.md §2.11 and are mirrored as DB CHECK constraints.
-- Timestamps are `TIMESTAMPTZ` and are returned as RFC3339 UTC.
-- Error envelope: `{"error":{"code","message","details":[{"field","message"}],"request_id"}}`. The status mapping is in design.md §17.
-- CSV export streams pgx rows → `csv.Writer` → the response, without loading everything into memory. It sanitizes cells that start with `= + - @`.
-- Isolation level is READ COMMITTED throughout.
+- Pagination uses `page` ≥ 1 and `limit` from 1 to 100, defaulting to 20. The repository
+  fetches `limit+1` rows to compute `has_next` and does not run `COUNT(*)`.
+- `PUT` replaces every editable field. `version` is an optional optimistic lock.
+- JSON rejects unknown fields, has a 1 MB body limit, and accepts only
+  `application/json`.
+- Timestamps are returned as RFC3339 UTC.
+- CSV is streamed directly from pgx rows through `csv.Writer`; cells beginning with
+  `=`, `+`, `-`, `@`, tab, or CR must be neutralized.
+- Error envelopes use
+  `{"error":{"code","message","details":[{"field","message"}],"request_id"}}`.
 
 ## Performance work
 
-Correctness comes before performance. Don't claim a TPS number without a k6 run that records the environment, dataset, VUs, p95/p99, error rate and commit SHA. Optimizations (Redis seen-cache, keyset pagination, pool tuning, async counter) are added one at a time, only after a benchmark shows the bottleneck, with before/after numbers in `docs/performance-report.md`. Don't turn off PostgreSQL durability settings to improve benchmark numbers.
+Do not publish a TPS claim without a k6 run that records the environment, dataset, VUs,
+p95/p99, error rate, and commit SHA. Add optimizations only after a benchmark identifies
+the bottleneck, and never disable PostgreSQL durability to improve benchmark numbers.

@@ -8,8 +8,8 @@ import (
 	"github.com/sky/blog-service/internal/domain"
 )
 
-// BlogService implements create, update, delete and list. Authorization
-// happens here, not in handlers.
+// BlogService implements create, update, delete, and list. Authorization happens here,
+// not in handlers.
 type BlogService struct {
 	repo  BlogRepository
 	clock Clock
@@ -41,8 +41,8 @@ func (s *BlogService) Create(ctx context.Context, actor domain.Actor, in domain.
 	})
 }
 
-// Update replaces all editable fields. Any Editor/Admin may update any blog
-// (no ownership rule). expectedVersion is optional optimistic locking.
+// Update replaces every editable field. Any Editor or Admin may update any blog because
+// there is no ownership rule. expectedVersion is an optional optimistic lock.
 func (s *BlogService) Update(ctx context.Context, actor domain.Actor, id uuid.UUID, in domain.BlogInput, expectedVersion *int) (domain.Blog, error) {
 	if err := actor.Require(domain.PermBlogUpdate); err != nil {
 		return domain.Blog{}, err
@@ -63,7 +63,7 @@ func (s *BlogService) Delete(ctx context.Context, actor domain.Actor, id uuid.UU
 	return s.repo.DeleteActive(ctx, id, s.clock.Now(), actor.ID)
 }
 
-// List returns one page of active blogs. It never records views.
+// List returns one page of active blogs and never records views.
 func (s *BlogService) List(ctx context.Context, actor domain.Actor, page, limit int) (domain.BlogPage, error) {
 	if err := actor.Require(domain.PermBlogRead); err != nil {
 		return domain.BlogPage{}, err

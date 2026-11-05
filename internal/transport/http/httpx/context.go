@@ -1,4 +1,4 @@
-// Package httpx holds HTTP helpers shared by middleware and handlers: context
+// Package httpx holds HTTP helpers shared by middleware and handlers, including context
 // accessors and the unified error response.
 package httpx
 
@@ -22,7 +22,7 @@ func RequestID(c *gin.Context) string        { return c.GetString(keyRequestID) 
 
 func SetActor(c *gin.Context, a domain.Actor) { c.Set(keyActor, a) }
 
-// ActorFrom returns the authenticated actor, or Anonymous if none was set.
+// ActorFrom returns the authenticated actor or Anonymous when none was set.
 func ActorFrom(c *gin.Context) domain.Actor {
 	if v, ok := c.Get(keyActor); ok {
 		if a, ok := v.(domain.Actor); ok {
@@ -34,7 +34,7 @@ func ActorFrom(c *gin.Context) domain.Actor {
 
 func SetClientIP(c *gin.Context, ip netip.Addr) { c.Set(keyClientIP, ip) }
 
-// ClientIPFrom returns the resolved client IP. ok is false if unresolved.
+// ClientIPFrom returns the resolved client IP. ok is false when it is unavailable.
 func ClientIPFrom(c *gin.Context) (netip.Addr, bool) {
 	if v, ok := c.Get(keyClientIP); ok {
 		if ip, ok := v.(netip.Addr); ok && ip.IsValid() {
@@ -44,5 +44,5 @@ func ClientIPFrom(c *gin.Context) (netip.Addr, bool) {
 	return netip.Addr{}, false
 }
 
-// ErrorCode returns the error code written for this request ("" if none).
+// ErrorCode returns the error code written for this request, or an empty string.
 func ErrorCode(c *gin.Context) string { return c.GetString(keyErrorCode) }

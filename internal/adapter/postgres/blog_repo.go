@@ -13,7 +13,7 @@ import (
 	"github.com/sky/blog-service/internal/domain"
 )
 
-// BlogRepo implements app.BlogRepository. All reads and updates filter on
+// BlogRepo implements app.BlogRepository. Every read and update filters on
 // deleted_at IS NULL so a soft-deleted blog is never visible or revived.
 type BlogRepo struct {
 	pool *pgxpool.Pool
@@ -116,7 +116,7 @@ func (r *BlogRepo) UpdateActive(ctx context.Context, u app.BlogUpdate) (domain.B
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.Blog{}, mapErr("update blog", err)
 	}
-	// No row updated: either the blog is gone, or the version check failed.
+	// No row was updated: either the blog is gone or the version check failed.
 	if u.ExpectedVersion != nil {
 		var one int
 		err := r.pool.QueryRow(ctx,
@@ -151,7 +151,8 @@ func (r *BlogRepo) StreamActive(ctx context.Context, fn func(app.ReportRow) erro
 		created_at, updated_at, created_by, updated_by
 	FROM blogs
 	WHERE deleted_at IS NULL
-	ORDER BY created_at DESC, id DESC`
+	ORDER BY created_at DESC, id DESC
+	LIMIT 10`
 	rows, err := r.pool.Query(ctx, q)
 	if err != nil {
 		return mapErr("stream blogs", err)

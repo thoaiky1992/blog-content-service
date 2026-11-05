@@ -21,7 +21,7 @@ const (
 	PermReportExport Permission = "report:export"
 )
 
-// rolePermissions is the permission matrix from the design (section 11).
+// rolePermissions is the role permission matrix.
 var rolePermissions = map[Role]map[Permission]bool{
 	RoleAdmin: {
 		PermBlogRead: true, PermBlogCreate: true, PermBlogUpdate: true,
@@ -54,8 +54,7 @@ func (a Actor) Can(p Permission) bool {
 }
 
 // Require returns nil if the actor holds p. Otherwise it returns
-// ErrUnauthenticated for an anonymous actor (so clients know to authenticate)
-// or ErrForbidden for an authenticated one.
+// ErrUnauthenticated for an anonymous actor or ErrForbidden for an authenticated one.
 func (a Actor) Require(p Permission) error {
 	if a.Can(p) {
 		return nil

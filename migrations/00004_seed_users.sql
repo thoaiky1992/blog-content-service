@@ -1,5 +1,5 @@
 -- +goose Up
--- Fixed IDs so the README, tests and load tests can use them as X-User-ID.
+-- The database generates UUID v7 IDs; see README for the X-User-ID lookup command.
 INSERT INTO users (name, role) VALUES
     ('Admin User',    'admin'),
     ('Editor User',   'editor'),

@@ -1,4 +1,4 @@
-// Package clock provides an injectable UTC clock so day boundaries are testable.
+// Package clock provides adapters for the application's clock port.
 package clock
 
 import (

@@ -1,5 +1,5 @@
-// Package domain holds business types and rules. It must not import Gin, pgx,
-// Redis or HTTP DTOs.
+// Package domain holds business types and rules. It must not import Gin, pgx, Redis,
+// or HTTP DTOs.
 package domain
 
 import (
@@ -7,13 +7,13 @@ import (
 	"strings"
 )
 
-// Sentinel errors. The transport layer maps them to HTTP statuses.
+// Sentinel errors are mapped to HTTP statuses by the transport layer.
 var (
 	ErrNotFound        = errors.New("not found")
 	ErrForbidden       = errors.New("forbidden")
 	ErrUnauthenticated = errors.New("unauthenticated")
 	ErrVersionConflict = errors.New("version conflict")
-	// ErrUnavailable marks the source of truth (PostgreSQL) being unreachable.
+	// ErrUnavailable indicates that the source of truth (PostgreSQL) is unreachable.
 	ErrUnavailable = errors.New("storage unavailable")
 )
 
@@ -23,8 +23,8 @@ type FieldError struct {
 	Message string
 }
 
-// ValidationError aggregates field errors. It is returned by value-object
-// validation and pagination checks.
+// ValidationError aggregates field errors from value-object validation and pagination
+// checks.
 type ValidationError struct {
 	Fields []FieldError
 }

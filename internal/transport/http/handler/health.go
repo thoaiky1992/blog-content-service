@@ -1,4 +1,4 @@
-// Package handler contains the HTTP handlers.
+// Package handler contains HTTP handlers.
 package handler
 
 import (
@@ -21,12 +21,12 @@ type Health struct {
 
 func NewHealth(db Pinger) *Health { return &Health{db: db} }
 
-// Healthz is liveness: the process is up.
+// Healthz is the liveness probe and reports that the process is running.
 func (h *Health) Healthz(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-// Readyz is readiness: PostgreSQL must be reachable.
+// Readyz is the readiness probe and requires PostgreSQL to be reachable.
 func (h *Health) Readyz(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()

@@ -43,7 +43,7 @@ type envelope struct {
 	Error errorBody `json:"error"`
 }
 
-// APIError is an error that already knows its HTTP representation.
+// APIError is an error that already contains its HTTP representation.
 type APIError struct {
 	Status  int
 	Code    string
@@ -53,9 +53,8 @@ type APIError struct {
 
 func (e *APIError) Error() string { return e.Code + ": " + e.Message }
 
-// WriteError maps err to the unified envelope and aborts the request.
-// Unclassified errors are logged and returned as a generic 500 so internals
-// never leak to clients.
+// WriteError maps err to the unified envelope and aborts the request. Unclassified
+// errors are logged and returned as a generic 500 so internals never leak to clients.
 func WriteError(c *gin.Context, err error) {
 	var api *APIError
 	var ve *domain.ValidationError

@@ -1,10 +1,9 @@
-// Package app holds the use cases. Ports (interfaces) are declared here, where
-// they are consumed; adapters implement them.
+// Package app holds use cases. Ports are declared where they are consumed, and adapters
+// implement them.
 package app
 
 import (
 	"context"
-	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,26 +16,26 @@ type Clock interface {
 	Now() time.Time
 }
 
-// BlogRepository is the persistence port for blogs. Every method only sees
-// active (not soft-deleted) blogs, except Create.
+// BlogRepository is the blog persistence port. Except for Create, every method operates
+// only on active, non-deleted blogs.
 type BlogRepository interface {
 	Create(ctx context.Context, b domain.Blog) (domain.Blog, error)
-	// GetActive returns domain.ErrNotFound if missing or deleted.
+	// GetActive returns domain.ErrNotFound when the blog is missing or deleted.
 	GetActive(ctx context.Context, id uuid.UUID) (domain.Blog, error)
 	// ListActive returns up to limit+1 rows so the caller can compute has_next.
 	ListActive(ctx context.Context, limit, offset int) ([]domain.BlogSummary, error)
-	// UpdateActive replaces the editable fields and bumps version. It returns
-	// domain.ErrNotFound if missing/deleted, and domain.ErrVersionConflict if
-	// expectedVersion is set and does not match.
+	// UpdateActive replaces editable fields and increments version. It returns
+	// domain.ErrNotFound when the blog is missing or deleted, and
+	// domain.ErrVersionConflict when expectedVersion is set but does not match.
 	UpdateActive(ctx context.Context, u BlogUpdate) (domain.Blog, error)
-	// DeleteActive soft-deletes; domain.ErrNotFound if missing or already deleted.
+	// DeleteActive soft-deletes a blog and returns domain.ErrNotFound if it is missing or deleted.
 	DeleteActive(ctx context.Context, id uuid.UUID, at time.Time, by uuid.UUID) error
-	// StreamActive calls fn for each active blog, newest first, without
-	// loading the whole set into memory. It stops on the first fn error.
+	// StreamActive calls fn for each active blog, newest first, without loading the
+	// entire result into memory. It stops at the first fn error.
 	StreamActive(ctx context.Context, fn func(ReportRow) error) error
 }
 
-// BlogUpdate carries a PUT. ExpectedVersion is optional optimistic locking.
+// BlogUpdate carries a PUT operation. ExpectedVersion is an optional optimistic lock.
 type BlogUpdate struct {
 	ID              uuid.UUID
 	Input           domain.BlogInput
@@ -60,19 +59,27 @@ type ReportRow struct {
 
 // ViewStore records unique daily views.
 type ViewStore interface {
-	// RecordUniqueView atomically inserts the dedup row and increments the
-	// counter (one SQL statement). counted is false for a duplicate key. It
-	// returns domain.ErrNotFound if the blog is missing or deleted.
+	// RecordUniqueView atomically inserts the deduplication row and increments the
+	// counter in one SQL statement. counted is false for a duplicate key. It returns
+	// domain.ErrNotFound when the blog is missing or deleted.
 	RecordUniqueView(ctx context.Context, key domain.ViewKey, at time.Time) (counted bool, err error)
 }
 
-// UserRepository resolves mock-auth users.
+// ViewCache stores derived markers for views committed to PostgreSQL. A cache miss or
+// failure must always fall back to ViewStore.
+type ViewCache interface {
+	WasRecorded(ctx context.Context, key domain.ViewKey) (bool, error)
+	MarkRecorded(ctx context.Context, key domain.ViewKey) error
+}
+
+// UserRepository resolves users for mock authentication.
 type UserRepository interface {
 	// GetByID returns domain.ErrNotFound for an unknown user.
 	GetByID(ctx context.Context, id uuid.UUID) (domain.Actor, error)
 }
 
-// IPHasher turns a client IP into the stored, non-reversible hash.
-type IPHasher interface {
-	Hash(ip netip.Addr) domain.IPHash
+// ActorCache caches successful user lookups. Unknown users are not cached.
+type ActorCache interface {
+	Get(ctx context.Context, id uuid.UUID) (actor domain.Actor, found bool, err error)
+	Set(ctx context.Context, actor domain.Actor) error
 }

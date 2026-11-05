@@ -11,7 +11,7 @@ import (
 	"github.com/sky/blog-service/internal/transport/http/httpx"
 )
 
-// Blog serves the blog endpoints. Handlers only translate HTTP <-> use cases;
+// Blog serves blog endpoints. Handlers only translate between HTTP and use cases;
 // authorization and business rules live in the app layer.
 type Blog struct {
 	blogs *app.BlogService
@@ -22,7 +22,7 @@ func NewBlog(blogs *app.BlogService, views *app.ViewService) *Blog {
 	return &Blog{blogs: blogs, views: views}
 }
 
-// List: GET /api/v1/blogs. Never records a view.
+// List handles GET /api/v1/blogs and never records a view.
 func (h *Blog) List(c *gin.Context) {
 	page, limit, err := parsePagination(c)
 	if err != nil {
@@ -37,7 +37,7 @@ func (h *Blog) List(c *gin.Context) {
 	c.JSON(http.StatusOK, newListResponse(res))
 }
 
-// Get: GET /api/v1/blogs/{id}. Records the unique daily view.
+// Get handles GET /api/v1/blogs/{id} and records a unique daily view.
 func (h *Blog) Get(c *gin.Context) {
 	id, err := parseID(c)
 	if err != nil {
@@ -54,14 +54,14 @@ func (h *Blog) Get(c *gin.Context) {
 		httpx.WriteError(c, err)
 		return
 	}
-	c.Header("Cache-Control", "no-store") // every read must reach the view counter
+	c.Header("Cache-Control", "no-store") // Every read must reach the view counter.
 	c.JSON(http.StatusOK, newBlogResponse(b))
 }
 
-// Create: POST /api/v1/blogs.
+// Create handles POST /api/v1/blogs.
 func (h *Blog) Create(c *gin.Context) {
 	actor := httpx.ActorFrom(c)
-	// Reject unauthorized callers before parsing a (possibly large) body.
+	// Reject unauthorized callers before parsing a potentially large body.
 	if err := actor.Require(domain.PermBlogCreate); err != nil {
 		httpx.WriteError(c, err)
 		return
@@ -80,7 +80,7 @@ func (h *Blog) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, newBlogResponse(b))
 }
 
-// Update: PUT /api/v1/blogs/{id}.
+// Update handles PUT /api/v1/blogs/{id}.
 func (h *Blog) Update(c *gin.Context) {
 	actor := httpx.ActorFrom(c)
 	if err := actor.Require(domain.PermBlogUpdate); err != nil {
@@ -109,7 +109,7 @@ func (h *Blog) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, newBlogResponse(b))
 }
 
-// Delete: DELETE /api/v1/blogs/{id} (soft delete).
+// Delete handles DELETE /api/v1/blogs/{id} as a soft delete.
 func (h *Blog) Delete(c *gin.Context) {
 	id, err := parseID(c)
 	if err != nil {
